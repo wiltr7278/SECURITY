@@ -942,7 +942,6 @@ async def on_command_error(
             "❌ You don't have permission "
             "to use that command."
         )
-
     elif isinstance(
         error,
         commands.MissingRequiredArgument
