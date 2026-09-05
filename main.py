@@ -1836,6 +1836,415 @@ async def on_app_command_error(
             )
     except discord.HTTPException:
         pass
+# ==============================
+# 🎫 TICKET SYSTEM
+# ==============================
+
+class TicketCloseView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Close Ticket",
+        emoji="🔒",
+        style=discord.ButtonStyle.danger,
+        custom_id="security_ticket_close"
+    )
+    async def close_ticket(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        channel = interaction.channel
+
+        if not isinstance(channel, discord.TextChannel):
+            await interaction.response.send_message(
+                "❌ This is not a ticket channel.",
+                ephemeral=True
+            )
+            return
+
+        if not channel.name.startswith("ticket-"):
+            await interaction.response.send_message(
+                "❌ This is not a ticket channel.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_message(
+            "🔒 Ticket will be deleted in **5 seconds**.",
+            ephemeral=False
+        )
+
+        await asyncio.sleep(5)
+
+        try:
+            await channel.delete(
+                reason=f"Ticket closed by {interaction.user}"
+            )
+        except discord.Forbidden:
+            pass
+        except discord.HTTPException:
+            pass
 
 
-bot.run(TOKEN)    
+class TicketCreateView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Create Ticket",
+        emoji="🎫",
+        style=discord.ButtonStyle.primary,
+        custom_id="security_ticket_create"
+    )
+    async def create_ticket(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        guild = interaction.guild
+        member = interaction.user
+
+        if guild is None:
+            await interaction.response.send_message(
+                "❌ This command can only be used in a server.",
+                ephemeral=True
+            )
+            return
+
+        # Check if the member already has a ticket.
+        existing_ticket = None
+
+        for channel in guild.text_channels:
+            if channel.name == f"ticket-{member.id}":
+                existing_ticket = channel
+                break
+
+        if existing_ticket:
+            await interaction.response.send_message(
+                f"🎫 You already have a ticket: {existing_ticket.mention}",
+                ephemeral=True
+            )
+            return
+
+        settings = get_guild_config(guild.id)
+
+        category_id = settings.get("ticket_category")
+        staff_role_id = settings.get("ticket_staff_role")
+
+        category = None
+
+        if category_id:
+            possible_category = guild.get_channel(category_id)
+
+            if isinstance(
+                possible_category,
+                discord.CategoryChannel
+            ):
+                category = possible_category
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(
+                view_channel=False
+            ),
+            member: discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+                attach_files=True,
+                embed_links=True
+            )
+        }
+
+        # Give the configured staff role access.
+        if staff_role_id:
+            staff_role = guild.get_role(staff_role_id)
+
+            if staff_role:
+                overwrites[staff_role] = discord.PermissionOverwrite(
+                    view_channel=True,
+                    send_messages=True,
+                    read_message_history=True,
+                    attach_files=True,
+                    embed_links=True
+                )
+
+        # Give the bot access.
+        if guild.me:
+            overwrites[guild.me] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+                manage_channels=True
+            )
+
+        try:
+            ticket_channel = await guild.create_text_channel(
+                name=f"ticket-{member.id}",
+                category=category,
+                overwrites=overwrites,
+                reason=f"Ticket created by {member}"
+            )
+
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "❌ I cannot create the ticket channel. "
+                "Make sure I have **Manage Channels** and **Manage Roles** permissions.",
+                ephemeral=True
+            )
+            return
+
+        except discord.HTTPException:
+            await interaction.response.send_message(
+                "❌ Discord rejected the ticket creation.",
+                ephemeral=True
+            )
+            return
+
+        embed = discord.Embed(
+            title="🎫 Support Ticket",
+            description=(
+                f"Welcome {member.mention}!\n\n"
+                "Please explain your issue and a staff member will help you.\n\n"
+                "When you're finished, press **🔒 Close Ticket**."
+            ),
+            color=discord.Color.blurple()
+        )
+
+        embed.set_footer(
+            text=f"Ticket opened by {member}"
+        )
+
+        try:
+            await ticket_channel.send(
+                content=member.mention,
+                embed=embed,
+                view=TicketCloseView()
+            )
+
+            await interaction.response.send_message(
+                f"✅ Ticket created: {ticket_channel.mention}",
+                ephemeral=True
+            )
+
+        except discord.HTTPException:
+            try:
+                await ticket_channel.delete(
+                    reason="Ticket setup failed"
+                )
+            except discord.HTTPException:
+                pass
+
+            await interaction.response.send_message(
+                "❌ I created the channel but couldn't send the ticket message.",
+                ephemeral=True
+            )
+
+
+@bot.tree.command(
+    name="ticketsetup",
+    description="Configure the ticket category and staff role."
+)
+@app_commands.describe(
+    category="Category where tickets should be created.",
+    staff_role="Staff role that can see tickets."
+)
+@app_commands.checks.has_permissions(
+    manage_guild=True
+)
+async def ticketsetup(
+    interaction: discord.Interaction,
+    category: discord.CategoryChannel,
+    staff_role: Optional[discord.Role] = None
+):
+    guild = interaction.guild
+
+    if guild is None:
+        await interaction.response.send_message(
+            "❌ This can only be used in a server.",
+            ephemeral=True
+        )
+        return
+
+    if staff_role and staff_role.is_default():
+        await interaction.response.send_message(
+            "❌ You cannot use @everyone as the staff role.",
+            ephemeral=True
+        )
+        return
+
+    settings = get_guild_config(guild.id)
+
+    settings["ticket_category"] = category.id
+
+    if staff_role:
+        settings["ticket_staff_role"] = staff_role.id
+    else:
+        settings.pop("ticket_staff_role", None)
+
+    save_config()
+
+    if staff_role:
+        role_text = staff_role.mention
+    else:
+        role_text = "No staff role configured."
+
+    await send_embed(
+        interaction,
+        "🎫 Ticket Setup Complete",
+        (
+            f"**Category:** {category.mention}\n"
+            f"**Staff role:** {role_text}\n\n"
+            "You can now use `/ticketpanel`."
+        ),
+        True
+    )
+
+
+@bot.tree.command(
+    name="ticketpanel",
+    description="Send the ticket creation panel."
+)
+@app_commands.describe(
+    channel="Channel where the ticket panel should be sent."
+)
+@app_commands.checks.has_permissions(
+    manage_guild=True
+)
+async def ticketpanel(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel
+):
+    guild = interaction.guild
+
+    settings = get_guild_config(guild.id)
+
+    category_id = settings.get("ticket_category")
+
+    if not category_id:
+        await send_embed(
+            interaction,
+            "❌ Ticket Not Setup",
+            "Use `/ticketsetup` first.",
+            True
+        )
+        return
+
+    category = guild.get_channel(category_id)
+
+    if not isinstance(
+        category,
+        discord.CategoryChannel
+    ):
+        await send_embed(
+            interaction,
+            "❌ Invalid Category",
+            "The configured ticket category no longer exists.",
+            True
+        )
+        return
+
+    embed = discord.Embed(
+        title="🎫 Support Center",
+        description=(
+            "Need help?\n\n"
+            "Click the button below to create a private support ticket.\n\n"
+            "🔒 Only you and the configured staff team will be able "
+            "to see your ticket."
+        ),
+        color=discord.Color.blurple()
+    )
+
+    embed.set_footer(
+        text=f"{guild.name} • Support"
+    )
+
+    try:
+        await channel.send(
+            embed=embed,
+            view=TicketCreateView()
+        )
+
+        await send_embed(
+            interaction,
+            "✅ Ticket Panel Sent",
+            f"The ticket panel was sent to {channel.mention}.",
+            True
+        )
+
+    except discord.Forbidden:
+        await send_embed(
+            interaction,
+            "❌ Permission Error",
+            "I cannot send messages in that channel.",
+            True
+        )
+
+    except discord.HTTPException:
+        await send_embed(
+            interaction,
+            "❌ Discord Error",
+            "Discord rejected the ticket panel.",
+            True
+        )
+
+
+@bot.tree.command(
+    name="ticketclose",
+    description="Close the current ticket."
+)
+async def ticketclose(
+    interaction: discord.Interaction
+):
+    channel = interaction.channel
+
+    if not isinstance(
+        channel,
+        discord.TextChannel
+    ):
+        await send_embed(
+            interaction,
+            "❌ Error",
+            "This is not a ticket channel.",
+            True
+        )
+        return
+
+    if not channel.name.startswith("ticket-"):
+        await send_embed(
+            interaction,
+            "❌ Error",
+            "This is not a ticket channel.",
+            True
+        )
+        return
+
+    await interaction.response.send_message(
+        "🔒 Ticket will be deleted in **5 seconds**."
+    )
+
+    await asyncio.sleep(5)
+
+    try:
+        await channel.delete(
+            reason=f"Ticket closed by {interaction.user}"
+        )
+    except discord.Forbidden:
+        pass
+    except discord.HTTPException:
+        pass
+
+
+# Register persistent ticket buttons.
+bot.add_view(TicketCreateView())
+bot.add_view(TicketCloseView())
+
+
+# ==============================
+# 🚀 START BOT
+# ==============================
+
+bot.run(TOKEN)
