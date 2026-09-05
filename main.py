@@ -1544,7 +1544,7 @@ async def wipe(
         "Press **Confirm Wipe** to continue.",
         view=view,
         ephemeral=True
-        )
+    )
 # =========================================================
 # TICKET HELPERS
 # =========================================================
