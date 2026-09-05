@@ -1,8 +1,14 @@
+# =========================
+#        START PART 1
+# =========================
+
 import discord
 from discord import app_commands
 from discord.ext import commands
+
 from datetime import timedelta
 from typing import Optional
+
 import os
 import json
 import asyncio
@@ -10,22 +16,22 @@ import random
 import re
 
 
-# =========================================================
-# BASIC CONFIG
-# =========================================================
+# =========================
+#       BOT SETTINGS
+# =========================
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 CONFIG_FILE = "config.json"
 
 if not TOKEN:
     raise RuntimeError(
-        "DISCORD_TOKEN is missing. Add DISCORD_TOKEN in Railway Variables."
+        "DISCORD_TOKEN is missing. Add it to Railway Variables."
     )
 
 
-# =========================================================
-# CONFIG SYSTEM
-# =========================================================
+# =========================
+#       CONFIG SYSTEM
+# =========================
 
 def load_config():
     if not os.path.exists(CONFIG_FILE):
@@ -51,6 +57,7 @@ def save_config():
     try:
         with open(CONFIG_FILE, "w", encoding="utf-8") as file:
             json.dump(config, file, indent=4)
+
     except OSError as error:
         print(f"Config save error: {error}")
 
@@ -64,9 +71,9 @@ def get_guild_config(guild_id):
     return config[guild_id]
 
 
-# =========================================================
-# MESSAGE FORMAT
-# =========================================================
+# =========================
+#      MESSAGE SYSTEM
+# =========================
 
 def format_message(text, member):
     return (
@@ -74,22 +81,235 @@ def format_message(text, member):
         .replace("{user}", member.mention)
         .replace("{username}", member.name)
         .replace("{server}", member.guild.name)
-        .replace("{count}", str(member.guild.member_count or 0))
+        .replace(
+            "{count}",
+            str(member.guild.member_count or 0)
+        )
     )
 
 
-# =========================================================
-# INTENTS
-# =========================================================
+# =========================
+#       TIKTOK SYSTEM
+# =========================
+
+def extract_tiktok_link(text):
+    if not text:
+        return None
+
+    pattern = (
+        r"https?://"
+        r"(?:www\.|vm\.|vt\.|m\.)?"
+        r"tiktok\.com/"
+        r"[^\s<>()]+"
+    )
+
+    match = re.search(
+        pattern,
+        text,
+        re.IGNORECASE
+    )
+
+    if not match:
+        return None
+
+    return match.group(0).rstrip(
+        ".,!?)]}"
+    )
+
+
+# =========================
+#         INTENTS
+# =========================
 
 intents = discord.Intents.default()
+
 intents.members = True
 intents.message_content = True
 
 
-# =========================================================
-# BOT CLASS
-# =========================================================
+# =========================
+#      VERIFY SYSTEM
+# =========================
+
+async def verify_member(member: discord.Member):
+
+    settings = get_guild_config(
+        member.guild.id
+    )
+
+    role_id = settings.get(
+        "verify_role"
+    )
+
+    if not role_id:
+        return (
+            False,
+            "❌ Verification has not been configured yet."
+        )
+
+    try:
+        role_id = int(role_id)
+
+    except (TypeError, ValueError):
+        return (
+            False,
+            "❌ The saved verification role is invalid."
+        )
+
+    role = member.guild.get_role(role_id)
+
+    if role is None:
+        return (
+            False,
+            "❌ The verification role no longer exists."
+        )
+
+    if role.is_default():
+        return (
+            False,
+            "❌ You cannot use @everyone."
+        )
+
+    if role.managed:
+        return (
+            False,
+            "❌ That role is managed and cannot be assigned."
+        )
+
+    if role in member.roles:
+        return (
+            True,
+            "✅ You are already verified."
+        )
+
+    bot_member = member.guild.me
+
+    if bot_member is None:
+        return (
+            False,
+            "❌ I could not find the bot in this server."
+        )
+
+    if not bot_member.guild_permissions.manage_roles:
+        return (
+            False,
+            "❌ I need the Manage Roles permission."
+        )
+
+    if role >= bot_member.top_role:
+        return (
+            False,
+            "❌ Move my bot role above the verification role."
+        )
+
+    try:
+        await member.add_roles(
+            role,
+            reason="SECURITY verification"
+        )
+
+        return (
+            True,
+            f"✅ You are now verified! "
+            f"You received {role.mention}."
+        )
+
+    except discord.Forbidden:
+        return (
+            False,
+            "❌ I cannot give you that role. "
+            "Make sure my bot role is above it."
+        )
+
+    except discord.HTTPException:
+        return (
+            False,
+            "❌ Discord rejected the role assignment."
+        )
+
+
+# =========================
+#       VERIFY BUTTON
+# =========================
+
+class VerifyView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Verify",
+        emoji="🛡️",
+        style=discord.ButtonStyle.success,
+        custom_id="security_verify_button"
+    )
+    async def verify_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "❌ This can only be used inside a server.",
+                ephemeral=True
+            )
+            return
+
+        member = interaction.user
+
+        if not isinstance(member, discord.Member):
+            await interaction.response.send_message(
+                "❌ I couldn't identify you as a server member.",
+                ephemeral=True
+            )
+            return
+
+        success, message = await verify_member(
+            member
+        )
+
+        await interaction.response.send_message(
+            message,
+            ephemeral=True
+        )
+
+
+# =========================
+#      VERIFY PANEL
+# =========================
+
+def create_verify_panel(guild):
+
+    settings = get_guild_config(
+        guild.id
+    )
+
+    message = settings.get(
+        "verify_message",
+        "Click the button below to verify yourself "
+        "and access the server."
+    )
+
+    embed = discord.Embed(
+        title="🛡️ Server Verification",
+        description=message,
+        color=discord.Color.blurple()
+    )
+
+    embed.set_footer(
+        text=f"{guild.name} • SECURITY"
+    )
+
+    return embed
+
+
+# =========================
+#         END PART 1
+# =========================
+# =========================
+#        START PART 2
+# =========================
 
 class SecurityBot(commands.Bot):
 
@@ -101,68 +321,151 @@ class SecurityBot(commands.Bot):
         )
 
     async def setup_hook(self):
-
-        # Persistent buttons
-        self.add_view(TicketCreateView())
-        self.add_view(TicketCloseView())
-        self.add_view(ShowcaseView())
+        self.add_view(VerifyView())
 
         try:
             synced = await self.tree.sync()
             print(f"Synced {len(synced)} slash commands.")
         except Exception as error:
-            print(f"Slash command sync error: {error}")
+            print(f"Sync error: {error}")
 
 
 bot = SecurityBot()
 
 
-# =========================================================
-# READY
-# =========================================================
+# =========================
+#      VERIFY COMMANDS
+# =========================
 
-@bot.event
-async def on_ready():
-    print("================================")
-    print(f"Logged in as: {bot.user}")
-    print(f"Bot ID: {bot.user.id}")
-    print(f"Servers: {len(bot.guilds)}")
-    print("SECURITY is online.")
-    print("================================")
-
-
-# =========================================================
-# EMBED HELPER
-# =========================================================
-
-async def send_embed(
-    interaction,
-    title,
-    description,
-    ephemeral=False
+@bot.tree.command(
+    name="verifysetup",
+    description="Set the verification role."
+)
+@app_commands.checks.has_permissions(administrator=True)
+async def verifysetup(
+    interaction: discord.Interaction,
+    role: discord.Role
 ):
-    embed = discord.Embed(
-        title=title,
-        description=description,
-        color=discord.Color.blurple()
+    if role.is_default() or role.managed:
+        await interaction.response.send_message(
+            "❌ That role cannot be used.",
+            ephemeral=True
+        )
+        return
+
+    bot_member = interaction.guild.me
+
+    if not bot_member.guild_permissions.manage_roles:
+        await interaction.response.send_message(
+            "❌ I need Manage Roles permission.",
+            ephemeral=True
+        )
+        return
+
+    if role >= bot_member.top_role:
+        await interaction.response.send_message(
+            "❌ Move my bot role above the verification role.",
+            ephemeral=True
+        )
+        return
+
+    settings = get_guild_config(
+        interaction.guild.id
     )
 
+    settings["verify_role"] = role.id
+    save_config()
+
+    await interaction.response.send_message(
+        f"✅ Verification role set to {role.mention}.",
+        ephemeral=True
+    )
+
+
+@bot.tree.command(
+    name="verify-message",
+    description="Set the verification message."
+)
+@app_commands.checks.has_permissions(administrator=True)
+async def verify_message(
+    interaction: discord.Interaction,
+    text: str
+):
+    settings = get_guild_config(
+        interaction.guild.id
+    )
+
+    settings["verify_message"] = text
+    save_config()
+
+    await interaction.response.send_message(
+        "✅ Verification message updated.",
+        ephemeral=True
+    )
+
+
+@bot.tree.command(
+    name="verify-panel",
+    description="Send the verification panel."
+)
+@app_commands.checks.has_permissions(administrator=True)
+async def verify_panel(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel
+):
+    settings = get_guild_config(
+        interaction.guild.id
+    )
+
+    if not settings.get("verify_role"):
+        await interaction.response.send_message(
+            "❌ Run `/verifysetup @role` first.",
+            ephemeral=True
+        )
+        return
+
     try:
-        if interaction.response.is_done():
-            await interaction.followup.send(
-                embed=embed,
-                ephemeral=ephemeral
-            )
-        else:
-            await interaction.response.send_message(
-                embed=embed,
-                ephemeral=ephemeral
-            )
-    except discord.HTTPException:
-        pass
-# =========================================================
-# WELCOME / BYE HELPERS
-# =========================================================
+        await channel.send(
+            embed=create_verify_panel(
+                interaction.guild
+            ),
+            view=VerifyView()
+        )
+
+        await interaction.response.send_message(
+            f"✅ Verification panel sent to {channel.mention}.",
+            ephemeral=True
+        )
+
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "❌ I cannot send messages in that channel.",
+            ephemeral=True
+        )
+
+
+@bot.tree.command(
+    name="verify",
+    description="Manually verify a member."
+)
+@app_commands.checks.has_permissions(manage_roles=True)
+async def verify(
+    interaction: discord.Interaction,
+    member: discord.Member
+):
+    success, message = await verify_member(
+        member
+    )
+
+    await interaction.response.send_message(
+        message,
+        ephemeral=True
+    )
+
+
+# =========================
+#     WELCOME / BYE HELPERS
+# =========================
 
 def make_member_embed(
     member,
@@ -173,25 +476,29 @@ def make_member_embed(
 ):
     embed = discord.Embed(
         title=title,
-        description=format_message(message, member),
+        description=format_message(
+            message,
+            member
+        ),
         color=discord.Color.blurple()
     )
 
     avatar_url = member.display_avatar.url
 
-    # Avatar in thumbnail
     if style in ("avatar", "both"):
-        embed.set_thumbnail(url=avatar_url)
+        embed.set_thumbnail(
+            url=avatar_url
+        )
 
-    # Large image
     if style == "avatar":
-        embed.set_image(url=avatar_url)
+        embed.set_image(
+            url=avatar_url
+        )
 
     elif style in ("custom", "both") and image_url:
-        embed.set_image(url=image_url)
-
-    elif style == "custom":
-        embed.set_image(url=avatar_url)
+        embed.set_image(
+            url=image_url
+        )
 
     embed.set_footer(
         text=f"{member.guild.name} • SECURITY"
@@ -200,168 +507,111 @@ def make_member_embed(
     return embed
 
 
-# =========================================================
-# WELCOME
-# =========================================================
-
-@bot.event
-async def on_member_join(member):
-
-    settings = get_guild_config(member.guild.id)
-
-    channel_id = settings.get("welcome_channel")
-
-    if not channel_id:
-        return
-
-    channel = member.guild.get_channel(channel_id)
-
-    if not isinstance(channel, discord.TextChannel):
-        return
-
-    message = settings.get(
-        "welcome_message",
-        "Welcome {user} to **{server}**! 🎉"
-    )
-
-    image_url = settings.get("welcome_image")
-    style = settings.get("welcome_style", "avatar")
-
-    embed = make_member_embed(
-        member,
-        "👋 Welcome!",
-        message,
-        image_url,
-        style
-    )
-
-    try:
-        await channel.send(embed=embed)
-    except discord.HTTPException:
-        pass
-
+# =========================
+#     WELCOME COMMANDS
+# =========================
 
 @bot.tree.command(
     name="welcome",
     description="Set the welcome channel."
-)
-@app_commands.describe(
-    channel="Channel for welcome messages."
 )
 @app_commands.checks.has_permissions(manage_guild=True)
 async def welcome(
     interaction: discord.Interaction,
     channel: discord.TextChannel
 ):
-    settings = get_guild_config(interaction.guild.id)
+    settings = get_guild_config(
+        interaction.guild.id
+    )
 
     settings["welcome_channel"] = channel.id
-
     save_config()
 
-    await send_embed(
-        interaction,
-        "✅ Welcome Channel",
-        f"Welcome messages will be sent in {channel.mention}.",
-        True
+    await interaction.response.send_message(
+        f"✅ Welcome channel set to {channel.mention}.",
+        ephemeral=True
     )
 
 
 @bot.tree.command(
     name="welcome-message",
-    description="Customize the welcome message."
-)
-@app_commands.describe(
-    message="Your welcome message."
+    description="Set the welcome message."
 )
 @app_commands.checks.has_permissions(manage_guild=True)
 async def welcome_message(
     interaction: discord.Interaction,
-    message: str
+    text: str
 ):
-    settings = get_guild_config(interaction.guild.id)
+    settings = get_guild_config(
+        interaction.guild.id
+    )
 
-    settings["welcome_message"] = message
-
+    settings["welcome_message"] = text
     save_config()
 
-    await send_embed(
-        interaction,
-        "✅ Welcome Message Updated",
-        (
-            f"{message}\n\n"
-            "**Placeholders:**\n"
-            "`{user}` ` {username}` `{server}` `{count}`"
-        ),
-        True
+    await interaction.response.send_message(
+        "✅ Welcome message updated.",
+        ephemeral=True
     )
 
 
 @bot.tree.command(
     name="welcome-image",
-    description="Set a custom welcome image."
-)
-@app_commands.describe(
-    image="Upload your welcome image."
+    description="Set the welcome image."
 )
 @app_commands.checks.has_permissions(manage_guild=True)
 async def welcome_image(
     interaction: discord.Interaction,
     image: discord.Attachment
 ):
-    if not image.content_type or not image.content_type.startswith("image/"):
-        await send_embed(
-            interaction,
-            "❌ Invalid Image",
-            "Please upload an image file.",
-            True
-        )
-        return
-
-    settings = get_guild_config(interaction.guild.id)
+    settings = get_guild_config(
+        interaction.guild.id
+    )
 
     settings["welcome_image"] = image.url
-
     save_config()
 
-    await send_embed(
-        interaction,
-        "🖼️ Welcome Image Saved",
-        "Your custom welcome image has been saved.",
-        True
+    await interaction.response.send_message(
+        "✅ Welcome image updated.",
+        ephemeral=True
     )
 
 
 @bot.tree.command(
     name="welcome-style",
-    description="Choose the welcome image/avatar style."
-)
-@app_commands.describe(
-    style="Choose how the welcome image looks."
-)
-@app_commands.choices(
-    style=[
-        app_commands.Choice(name="Member Avatar", value="avatar"),
-        app_commands.Choice(name="Custom Image", value="custom"),
-        app_commands.Choice(name="Custom Image + Avatar", value="both")
-    ]
+    description="Set the welcome style."
 )
 @app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.choices(
+    style=[
+        app_commands.Choice(
+            name="Avatar",
+            value="avatar"
+        ),
+        app_commands.Choice(
+            name="Custom",
+            value="custom"
+        ),
+        app_commands.Choice(
+            name="Both",
+            value="both"
+        )
+    ]
+)
 async def welcome_style(
     interaction: discord.Interaction,
     style: app_commands.Choice[str]
 ):
-    settings = get_guild_config(interaction.guild.id)
+    settings = get_guild_config(
+        interaction.guild.id
+    )
 
     settings["welcome_style"] = style.value
-
     save_config()
 
-    await send_embed(
-        interaction,
-        "✅ Welcome Style Updated",
-        f"Welcome style: **{style.name}**",
-        True
+    await interaction.response.send_message(
+        f"✅ Welcome style: **{style.name}**",
+        ephemeral=True
     )
 
 
@@ -369,192 +619,146 @@ async def welcome_style(
     name="testwelcome",
     description="Test the welcome message."
 )
+@app_commands.checks.has_permissions(manage_guild=True)
 async def testwelcome(
     interaction: discord.Interaction
 ):
-    settings = get_guild_config(interaction.guild.id)
+    settings = get_guild_config(
+        interaction.guild.id
+    )
 
     message = settings.get(
         "welcome_message",
         "Welcome {user} to **{server}**! 🎉"
     )
 
-    image_url = settings.get("welcome_image")
-    style = settings.get("welcome_style", "avatar")
+    image = settings.get(
+        "welcome_image"
+    )
+
+    style = settings.get(
+        "welcome_style",
+        "avatar"
+    )
 
     embed = make_member_embed(
         interaction.user,
-        "👋 Welcome Test",
+        "Welcome! 🎉",
         message,
-        image_url,
+        image,
         style
     )
 
-    await interaction.response.send_message(embed=embed)
-
-
-# =========================================================
-# BYE
-# =========================================================
-
-@bot.event
-async def on_member_remove(member):
-
-    settings = get_guild_config(member.guild.id)
-
-    channel_id = settings.get("bye_channel")
-
-    if not channel_id:
-        return
-
-    channel = member.guild.get_channel(channel_id)
-
-    if not isinstance(channel, discord.TextChannel):
-        return
-
-    message = settings.get(
-        "bye_message",
-        "Goodbye **{username}**! 👋"
+    await interaction.response.send_message(
+        embed=embed
     )
 
-    image_url = settings.get("bye_image")
-    style = settings.get("bye_style", "avatar")
 
-    embed = make_member_embed(
-        member,
-        "🚪 Goodbye!",
-        message,
-        image_url,
-        style
-    )
-
-    try:
-        await channel.send(embed=embed)
-    except discord.HTTPException:
-        pass
-
+# =========================
+#       BYE COMMANDS
+# =========================
 
 @bot.tree.command(
     name="bye",
     description="Set the goodbye channel."
-)
-@app_commands.describe(
-    channel="Channel for goodbye messages."
 )
 @app_commands.checks.has_permissions(manage_guild=True)
 async def bye(
     interaction: discord.Interaction,
     channel: discord.TextChannel
 ):
-    settings = get_guild_config(interaction.guild.id)
+    settings = get_guild_config(
+        interaction.guild.id
+    )
 
     settings["bye_channel"] = channel.id
-
     save_config()
 
-    await send_embed(
-        interaction,
-        "✅ Bye Channel",
-        f"Goodbye messages will be sent in {channel.mention}.",
-        True
+    await interaction.response.send_message(
+        f"✅ Goodbye channel set to {channel.mention}.",
+        ephemeral=True
     )
 
 
 @bot.tree.command(
     name="bye-message",
-    description="Customize the goodbye message."
-)
-@app_commands.describe(
-    message="Your goodbye message."
+    description="Set the goodbye message."
 )
 @app_commands.checks.has_permissions(manage_guild=True)
 async def bye_message(
     interaction: discord.Interaction,
-    message: str
+    text: str
 ):
-    settings = get_guild_config(interaction.guild.id)
+    settings = get_guild_config(
+        interaction.guild.id
+    )
 
-    settings["bye_message"] = message
-
+    settings["bye_message"] = text
     save_config()
 
-    await send_embed(
-        interaction,
-        "✅ Bye Message Updated",
-        (
-            f"{message}\n\n"
-            "**Placeholders:**\n"
-            "`{user}` `{username}` `{server}` `{count}`"
-        ),
-        True
+    await interaction.response.send_message(
+        "✅ Goodbye message updated.",
+        ephemeral=True
     )
 
 
 @bot.tree.command(
     name="bye-image",
-    description="Set a custom goodbye image."
-)
-@app_commands.describe(
-    image="Upload your goodbye image."
+    description="Set the goodbye image."
 )
 @app_commands.checks.has_permissions(manage_guild=True)
 async def bye_image(
     interaction: discord.Interaction,
     image: discord.Attachment
 ):
-    if not image.content_type or not image.content_type.startswith("image/"):
-        await send_embed(
-            interaction,
-            "❌ Invalid Image",
-            "Please upload an image file.",
-            True
-        )
-        return
-
-    settings = get_guild_config(interaction.guild.id)
+    settings = get_guild_config(
+        interaction.guild.id
+    )
 
     settings["bye_image"] = image.url
-
     save_config()
 
-    await send_embed(
-        interaction,
-        "🖼️ Bye Image Saved",
-        "Your custom goodbye image has been saved.",
-        True
+    await interaction.response.send_message(
+        "✅ Goodbye image updated.",
+        ephemeral=True
     )
 
 
 @bot.tree.command(
     name="bye-style",
-    description="Choose the goodbye image/avatar style."
-)
-@app_commands.describe(
-    style="Choose how the goodbye image looks."
-)
-@app_commands.choices(
-    style=[
-        app_commands.Choice(name="Member Avatar", value="avatar"),
-        app_commands.Choice(name="Custom Image", value="custom"),
-        app_commands.Choice(name="Custom Image + Avatar", value="both")
-    ]
+    description="Set the goodbye style."
 )
 @app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.choices(
+    style=[
+        app_commands.Choice(
+            name="Avatar",
+            value="avatar"
+        ),
+        app_commands.Choice(
+            name="Custom",
+            value="custom"
+        ),
+        app_commands.Choice(
+            name="Both",
+            value="both"
+        )
+    ]
+)
 async def bye_style(
     interaction: discord.Interaction,
     style: app_commands.Choice[str]
 ):
-    settings = get_guild_config(interaction.guild.id)
+    settings = get_guild_config(
+        interaction.guild.id
+    )
 
     settings["bye_style"] = style.value
-
     save_config()
 
-    await send_embed(
-        interaction,
-        "✅ Bye Style Updated",
-        f"Goodbye style: **{style.name}**",
-        True
+    await interaction.response.send_message(
+        f"✅ Goodbye style: **{style.name}**",
+        ephemeral=True
     )
 
 
@@ -562,294 +766,93 @@ async def bye_style(
     name="testbye",
     description="Test the goodbye message."
 )
+@app_commands.checks.has_permissions(manage_guild=True)
 async def testbye(
     interaction: discord.Interaction
 ):
-    settings = get_guild_config(interaction.guild.id)
+    settings = get_guild_config(
+        interaction.guild.id
+    )
 
     message = settings.get(
         "bye_message",
-        "Goodbye **{username}**! 👋"
+        "Goodbye {user}. 👋"
     )
 
-    image_url = settings.get("bye_image")
-    style = settings.get("bye_style", "avatar")
+    image = settings.get(
+        "bye_image"
+    )
+
+    style = settings.get(
+        "bye_style",
+        "avatar"
+    )
 
     embed = make_member_embed(
         interaction.user,
-        "🚪 Goodbye Test",
+        "Goodbye! 👋",
         message,
-        image_url,
+        image,
         style
     )
 
-    await interaction.response.send_message(embed=embed)
-# =========================================================
-# VERIFY SYSTEM
-# =========================================================
-
-@bot.tree.command(
-    name="verifysetup",
-    description="Set the verification role."
-)
-@app_commands.describe(
-    role="Role members receive when verified."
-)
-@app_commands.checks.has_permissions(manage_guild=True)
-async def verifysetup(
-    interaction: discord.Interaction,
-    role: discord.Role
-):
-    guild = interaction.guild
-
-    if role.is_default():
-        await send_embed(
-            interaction,
-            "❌ Invalid Role",
-            "You cannot use the @everyone role.",
-            True
-        )
-        return
-
-    if role.managed:
-        await send_embed(
-            interaction,
-            "❌ Invalid Role",
-            "You cannot use a managed/integration role.",
-            True
-        )
-        return
-
-    if guild.me and role >= guild.me.top_role:
-        await send_embed(
-            interaction,
-            "❌ Role Hierarchy",
-            "My highest role must be above the verification role.",
-            True
-        )
-        return
-
-    settings = get_guild_config(guild.id)
-
-    settings["verify_role"] = role.id
-
-    save_config()
-
-    await send_embed(
-        interaction,
-        "✅ Verification Setup",
-        f"Verified members receive {role.mention}.",
-        True
+    await interaction.response.send_message(
+        embed=embed
     )
 
 
-@bot.tree.command(
-    name="verify-message",
-    description="Customize the verification message."
-)
-@app_commands.describe(
-    message="Text shown when someone uses verify."
-)
-@app_commands.checks.has_permissions(manage_guild=True)
-async def verify_message(
-    interaction: discord.Interaction,
-    message: str
-):
-    settings = get_guild_config(interaction.guild.id)
-
-    settings["verify_message"] = message
-
-    save_config()
-
-    await send_embed(
-        interaction,
-        "✅ Verify Message Updated",
-        message,
-        True
-    )
-
-
-@bot.tree.command(
-    name="verify",
-    description="Verify yourself."
-)
-async def verify(
-    interaction: discord.Interaction
-):
-    guild = interaction.guild
-
-    settings = get_guild_config(guild.id)
-
-    role_id = settings.get("verify_role")
-
-    if not role_id:
-        await send_embed(
-            interaction,
-            "❌ Verification Not Setup",
-            "An administrator needs to run `/verifysetup` first.",
-            True
-        )
-        return
-
-    role = guild.get_role(role_id)
-
-    if role is None:
-        await send_embed(
-            interaction,
-            "❌ Role Missing",
-            "The configured verification role no longer exists.",
-            True
-        )
-        return
-
-    if role.is_default() or role.managed:
-        await send_embed(
-            interaction,
-            "❌ Invalid Verification Role",
-            "The configured role cannot be used.",
-            True
-        )
-        return
-
-    if guild.me and role >= guild.me.top_role:
-        await send_embed(
-            interaction,
-            "❌ Role Hierarchy",
-            "My bot role must be above the verification role.",
-            True
-        )
-        return
-
-    if role in interaction.user.roles:
-        await send_embed(
-            interaction,
-            "✅ Already Verified",
-            "You are already verified.",
-            True
-        )
-        return
-
-    try:
-        await interaction.user.add_roles(
-            role,
-            reason="SECURITY verification"
-        )
-
-        message = settings.get(
-            "verify_message",
-            "You have been successfully verified! ✅"
-        )
-
-        await send_embed(
-            interaction,
-            "✅ Verified",
-            format_message(message, interaction.user),
-            True
-        )
-
-    except discord.Forbidden:
-        await send_embed(
-            interaction,
-            "❌ Permission Error",
-            "I cannot give that role. Check my role hierarchy and Manage Roles permission.",
-            True
-        )
-
-    except discord.HTTPException:
-        await send_embed(
-            interaction,
-            "❌ Discord Error",
-            "Discord rejected the role change.",
-            True
-        )
-# =========================================================
-# MODERATION
-# =========================================================
-
-@bot.tree.command(
-    name="clear",
-    description="Delete messages."
-)
-@app_commands.describe(
-    amount="Number of messages to delete."
-)
-@app_commands.checks.has_permissions(manage_messages=True)
-async def clear(
-    interaction: discord.Interaction,
-    amount: app_commands.Range[int, 1, 100]
-):
-    await interaction.response.defer(ephemeral=True)
-
-    try:
-        deleted = await interaction.channel.purge(
-            limit=amount
-        )
-
-        await interaction.followup.send(
-            f"🧹 Deleted **{len(deleted)}** messages.",
-            ephemeral=True
-        )
-
-    except discord.Forbidden:
-        await interaction.followup.send(
-            "❌ I need Manage Messages permission.",
-            ephemeral=True
-        )
-
-    except discord.HTTPException:
-        await interaction.followup.send(
-            "❌ Discord rejected the cleanup.",
-            ephemeral=True
-        )
-
+# =========================
+#         END PART 2
+# =========================
+# =========================
+#        START PART 3
+# =========================
 
 @bot.tree.command(
     name="kick",
     description="Kick a member."
 )
-@app_commands.describe(
-    member="Member to kick.",
-    reason="Reason for the kick."
+@app_commands.checks.has_permissions(
+    kick_members=True
 )
-@app_commands.checks.has_permissions(kick_members=True)
 async def kick(
     interaction: discord.Interaction,
     member: discord.Member,
     reason: str = "No reason provided"
 ):
     if member == interaction.user:
-        await send_embed(
-            interaction,
-            "❌ Error",
-            "You cannot kick yourself.",
-            True
+        await interaction.response.send_message(
+            "❌ You cannot kick yourself.",
+            ephemeral=True
         )
         return
 
-    if interaction.guild.me and member >= interaction.guild.me:
-        await send_embed(
-            interaction,
-            "❌ Role Hierarchy",
-            "My role must be above that member.",
-            True
+    if member.top_role >= interaction.user.top_role:
+        await interaction.response.send_message(
+            "❌ You cannot kick someone with an equal or higher role.",
+            ephemeral=True
+        )
+        return
+
+    if member.top_role >= interaction.guild.me.top_role:
+        await interaction.response.send_message(
+            "❌ My bot role is not high enough.",
+            ephemeral=True
         )
         return
 
     try:
         await member.kick(reason=reason)
 
-        await send_embed(
-            interaction,
-            "👢 Member Kicked",
-            f"{member.mention} was kicked.\n**Reason:** {reason}"
+        await interaction.response.send_message(
+            f"👢 Kicked {member.mention}.\n"
+            f"Reason: {reason}"
         )
 
     except discord.Forbidden:
-        await send_embed(
-            interaction,
-            "❌ Permission Error",
-            "I cannot kick that member.",
-            True
+        await interaction.response.send_message(
+            "❌ I don't have permission to kick this member.",
+            ephemeral=True
         )
 
 
@@ -857,52 +860,47 @@ async def kick(
     name="ban",
     description="Ban a member."
 )
-@app_commands.describe(
-    member="Member to ban.",
-    reason="Reason for the ban."
+@app_commands.checks.has_permissions(
+    ban_members=True
 )
-@app_commands.checks.has_permissions(ban_members=True)
 async def ban(
     interaction: discord.Interaction,
     member: discord.Member,
     reason: str = "No reason provided"
 ):
     if member == interaction.user:
-        await send_embed(
-            interaction,
-            "❌ Error",
-            "You cannot ban yourself.",
-            True
+        await interaction.response.send_message(
+            "❌ You cannot ban yourself.",
+            ephemeral=True
         )
         return
 
-    if interaction.guild.me and member >= interaction.guild.me:
-        await send_embed(
-            interaction,
-            "❌ Role Hierarchy",
-            "My role must be above that member.",
-            True
+    if member.top_role >= interaction.user.top_role:
+        await interaction.response.send_message(
+            "❌ You cannot ban someone with an equal or higher role.",
+            ephemeral=True
+        )
+        return
+
+    if member.top_role >= interaction.guild.me.top_role:
+        await interaction.response.send_message(
+            "❌ My bot role is not high enough.",
+            ephemeral=True
         )
         return
 
     try:
-        await member.ban(
-            reason=reason,
-            delete_message_seconds=0
-        )
+        await member.ban(reason=reason)
 
-        await send_embed(
-            interaction,
-            "🔨 Member Banned",
-            f"{member.mention} was banned.\n**Reason:** {reason}"
+        await interaction.response.send_message(
+            f"🔨 Banned {member.mention}.\n"
+            f"Reason: {reason}"
         )
 
     except discord.Forbidden:
-        await send_embed(
-            interaction,
-            "❌ Permission Error",
-            "I cannot ban that member.",
-            True
+        await interaction.response.send_message(
+            "❌ I don't have permission to ban this member.",
+            ephemeral=True
         )
 
 
@@ -910,36 +908,38 @@ async def ban(
     name="timeout",
     description="Timeout a member."
 )
-@app_commands.describe(
-    member="Member to timeout.",
-    minutes="Timeout duration in minutes."
+@app_commands.checks.has_permissions(
+    moderate_members=True
 )
-@app_commands.checks.has_permissions(moderate_members=True)
 async def timeout(
     interaction: discord.Interaction,
     member: discord.Member,
     minutes: app_commands.Range[int, 1, 40320]
 ):
     if member == interaction.user:
-        await send_embed(
-            interaction,
-            "❌ Error",
-            "You cannot timeout yourself.",
-            True
+        await interaction.response.send_message(
+            "❌ You cannot timeout yourself.",
+            ephemeral=True
         )
         return
 
-    if interaction.guild.me and member >= interaction.guild.me:
-        await send_embed(
-            interaction,
-            "❌ Role Hierarchy",
-            "My role must be above that member.",
-            True
+    if member.top_role >= interaction.user.top_role:
+        await interaction.response.send_message(
+            "❌ You cannot timeout someone with an equal or higher role.",
+            ephemeral=True
         )
         return
 
-    until = discord.utils.utcnow() + timedelta(
-        minutes=minutes
+    if member.top_role >= interaction.guild.me.top_role:
+        await interaction.response.send_message(
+            "❌ My bot role is not high enough.",
+            ephemeral=True
+        )
+        return
+
+    until = (
+        discord.utils.utcnow()
+        + timedelta(minutes=minutes)
     )
 
     try:
@@ -948,18 +948,15 @@ async def timeout(
             reason=f"Timeout by {interaction.user}"
         )
 
-        await send_embed(
-            interaction,
-            "⏱️ Member Timed Out",
-            f"{member.mention} was timed out for **{minutes} minutes**."
+        await interaction.response.send_message(
+            f"⏳ {member.mention} was timed out "
+            f"for **{minutes} minutes**."
         )
 
     except discord.Forbidden:
-        await send_embed(
-            interaction,
-            "❌ Permission Error",
-            "I cannot timeout that member.",
-            True
+        await interaction.response.send_message(
+            "❌ I don't have permission to timeout this member.",
+            ephemeral=True
         )
 
 
@@ -967,10 +964,9 @@ async def timeout(
     name="untimeout",
     description="Remove a member's timeout."
 )
-@app_commands.describe(
-    member="Member to untimeout."
+@app_commands.checks.has_permissions(
+    moderate_members=True
 )
-@app_commands.checks.has_permissions(moderate_members=True)
 async def untimeout(
     interaction: discord.Interaction,
     member: discord.Member
@@ -978,21 +974,17 @@ async def untimeout(
     try:
         await member.edit(
             timed_out_until=None,
-            reason=f"Timeout removed by {interaction.user}"
+            reason=f"Untimeout by {interaction.user}"
         )
 
-        await send_embed(
-            interaction,
-            "✅ Timeout Removed",
-            f"{member.mention} is no longer timed out."
+        await interaction.response.send_message(
+            f"✅ Removed timeout from {member.mention}."
         )
 
     except discord.Forbidden:
-        await send_embed(
-            interaction,
-            "❌ Permission Error",
-            "I cannot remove that timeout.",
-            True
+        await interaction.response.send_message(
+            "❌ I don't have permission to remove this timeout.",
+            ephemeral=True
         )
 
 
@@ -1000,49 +992,44 @@ async def untimeout(
     name="addrole",
     description="Give a role to a member."
 )
-@app_commands.describe(
-    member="Member.",
-    role="Role to give."
+@app_commands.checks.has_permissions(
+    manage_roles=True
 )
-@app_commands.checks.has_permissions(manage_roles=True)
 async def addrole(
     interaction: discord.Interaction,
     member: discord.Member,
     role: discord.Role
 ):
+    bot_member = interaction.guild.me
+
     if role.is_default() or role.managed:
-        await send_embed(
-            interaction,
-            "❌ Invalid Role",
-            "That role cannot be assigned.",
-            True
+        await interaction.response.send_message(
+            "❌ That role cannot be assigned.",
+            ephemeral=True
         )
         return
 
-    if interaction.guild.me and role >= interaction.guild.me.top_role:
-        await send_embed(
-            interaction,
-            "❌ Role Hierarchy",
-            "My role must be above the role I'm assigning.",
-            True
+    if role >= bot_member.top_role:
+        await interaction.response.send_message(
+            "❌ My bot role must be above that role.",
+            ephemeral=True
         )
         return
 
     try:
-        await member.add_roles(role)
+        await member.add_roles(
+            role,
+            reason=f"Role added by {interaction.user}"
+        )
 
-        await send_embed(
-            interaction,
-            "✅ Role Added",
-            f"{role.mention} was added to {member.mention}."
+        await interaction.response.send_message(
+            f"✅ Added {role.mention} to {member.mention}."
         )
 
     except discord.Forbidden:
-        await send_embed(
-            interaction,
-            "❌ Permission Error",
-            "I cannot give that role.",
-            True
+        await interaction.response.send_message(
+            "❌ I cannot assign that role.",
+            ephemeral=True
         )
 
 
@@ -1050,124 +1037,135 @@ async def addrole(
     name="removerole",
     description="Remove a role from a member."
 )
-@app_commands.describe(
-    member="Member.",
-    role="Role to remove."
+@app_commands.checks.has_permissions(
+    manage_roles=True
 )
-@app_commands.checks.has_permissions(manage_roles=True)
 async def removerole(
     interaction: discord.Interaction,
     member: discord.Member,
     role: discord.Role
 ):
+    bot_member = interaction.guild.me
+
     if role.is_default() or role.managed:
-        await send_embed(
-            interaction,
-            "❌ Invalid Role",
-            "That role cannot be removed.",
-            True
+        await interaction.response.send_message(
+            "❌ That role cannot be removed.",
+            ephemeral=True
         )
         return
 
-    if interaction.guild.me and role >= interaction.guild.me.top_role:
-        await send_embed(
-            interaction,
-            "❌ Role Hierarchy",
-            "My role must be above the role I'm modifying.",
-            True
+    if role >= bot_member.top_role:
+        await interaction.response.send_message(
+            "❌ My bot role must be above that role.",
+            ephemeral=True
         )
         return
 
     try:
-        await member.remove_roles(role)
+        await member.remove_roles(
+            role,
+            reason=f"Role removed by {interaction.user}"
+        )
 
-        await send_embed(
-            interaction,
-            "✅ Role Removed",
-            f"{role.mention} was removed from {member.mention}."
+        await interaction.response.send_message(
+            f"✅ Removed {role.mention} from {member.mention}."
         )
 
     except discord.Forbidden:
-        await send_embed(
-            interaction,
-            "❌ Permission Error",
-            "I cannot remove that role.",
-            True
+        await interaction.response.send_message(
+            "❌ I cannot remove that role.",
+            ephemeral=True
         )
-# =========================================================
-# CLEANER
-# =========================================================
 
-async def delete_messages_matching(
+
+# =========================
+#         END PART 3
+# =========================
+# =========================
+#        START PART 4
+# =========================
+
+async def delete_matching_messages(
     channel,
-    amount,
-    check_function
+    checker,
+    amount
 ):
     deleted = 0
 
-    try:
-        async for message in channel.history(
-            limit=amount
-        ):
-            if check_function(message):
-                try:
-                    await message.delete()
-                    deleted += 1
-                except discord.HTTPException:
-                    pass
+    async for message in channel.history(
+        limit=None
+    ):
+        if deleted >= amount:
+            break
 
-    except discord.HTTPException:
-        pass
+        if checker(message):
+            try:
+                await message.delete()
+                deleted += 1
+            except discord.HTTPException:
+                pass
 
     return deleted
 
+
+# =========================
+#       CLEAR USER
+# =========================
 
 @bot.tree.command(
     name="clearuser",
     description="Delete messages from a user."
 )
-@app_commands.describe(
-    member="User whose messages should be deleted.",
-    amount="Number of messages to check."
+@app_commands.checks.has_permissions(
+    manage_messages=True
 )
-@app_commands.checks.has_permissions(manage_messages=True)
 async def clearuser(
     interaction: discord.Interaction,
     member: discord.Member,
-    amount: app_commands.Range[int, 1, 100]
+    amount: app_commands.Range[int, 1, 500]
 ):
-    await interaction.response.defer(ephemeral=True)
-
-    deleted = await delete_messages_matching(
-        interaction.channel,
-        amount,
-        lambda m: m.author.id == member.id
-    )
-
-    await interaction.followup.send(
-        f"🧹 Deleted **{deleted}** messages from {member.mention}.",
+    await interaction.response.defer(
         ephemeral=True
     )
 
+    deleted = await delete_matching_messages(
+        interaction.channel,
+        lambda message:
+            message.author.id == member.id,
+        amount
+    )
+
+    await interaction.followup.send(
+        f"🧹 Deleted **{deleted}** messages "
+        f"from {member.mention}.",
+        ephemeral=True
+    )
+
+
+# =========================
+#       CLEAR BOTS
+# =========================
 
 @bot.tree.command(
     name="clearbots",
     description="Delete bot messages."
 )
-@app_commands.describe(
-    amount="Number of messages to check."
+@app_commands.checks.has_permissions(
+    manage_messages=True
 )
-@app_commands.checks.has_permissions(manage_messages=True)
 async def clearbots(
     interaction: discord.Interaction,
-    amount: app_commands.Range[int, 1, 100]
+    amount: app_commands.Range[int, 1, 500]
 ):
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer(
+        ephemeral=True
+    )
 
-    deleted = await delete_messages_matching(
+    deleted = await delete_matching_messages(
         interaction.channel,
-        amount,
-        lambda m: m.author.bot
+        lambda message:
+            message.author.bot,
+        amount
     )
 
     await interaction.followup.send(
@@ -1176,60 +1174,73 @@ async def clearbots(
     )
 
 
+# =========================
+#       CLEAR LINKS
+# =========================
+
 @bot.tree.command(
     name="clearlinks",
     description="Delete messages containing links."
 )
-@app_commands.describe(
-    amount="Number of messages to check."
+@app_commands.checks.has_permissions(
+    manage_messages=True
 )
-@app_commands.checks.has_permissions(manage_messages=True)
 async def clearlinks(
     interaction: discord.Interaction,
-    amount: app_commands.Range[int, 1, 100]
+    amount: app_commands.Range[int, 1, 500]
 ):
-    await interaction.response.defer(ephemeral=True)
-
-    url_pattern = re.compile(
-        r"https?://\S+",
-        re.IGNORECASE
+    await interaction.response.defer(
+        ephemeral=True
     )
 
-    deleted = await delete_messages_matching(
+    deleted = await delete_matching_messages(
         interaction.channel,
-        amount,
-        lambda m: bool(url_pattern.search(m.content))
+        lambda message:
+            bool(
+                re.search(
+                    r"https?://",
+                    message.content
+                )
+            ),
+        amount
     )
 
     await interaction.followup.send(
-        f"🔗 Deleted **{deleted}** messages containing links.",
+        f"🔗 Deleted **{deleted}** link messages.",
         ephemeral=True
     )
 
 
+# =========================
+#      CLEAR INVITES
+# =========================
+
 @bot.tree.command(
     name="clearinvites",
-    description="Delete Discord invite links."
+    description="Delete Discord invite messages."
 )
-@app_commands.describe(
-    amount="Number of messages to check."
+@app_commands.checks.has_permissions(
+    manage_messages=True
 )
-@app_commands.checks.has_permissions(manage_messages=True)
 async def clearinvites(
     interaction: discord.Interaction,
-    amount: app_commands.Range[int, 1, 100]
+    amount: app_commands.Range[int, 1, 500]
 ):
-    await interaction.response.defer(ephemeral=True)
-
-    invite_pattern = re.compile(
-        r"(discord\.gg/|discord\.com/invite/)",
-        re.IGNORECASE
+    await interaction.response.defer(
+        ephemeral=True
     )
 
-    deleted = await delete_messages_matching(
+    deleted = await delete_matching_messages(
         interaction.channel,
-        amount,
-        lambda m: bool(invite_pattern.search(m.content))
+        lambda message:
+            bool(
+                re.search(
+                    r"(discord\.gg/|discord\.com/invite/)",
+                    message.content,
+                    re.IGNORECASE
+                )
+            ),
+        amount
     )
 
     await interaction.followup.send(
@@ -1238,28 +1249,34 @@ async def clearinvites(
     )
 
 
+# =========================
+#       CLEAR CHANNEL
+# =========================
+
 @bot.tree.command(
     name="clearchannel",
-    description="Delete and recreate the current channel."
+    description="Clear the current channel."
 )
-@app_commands.checks.has_permissions(manage_channels=True)
+@app_commands.checks.has_permissions(
+    manage_channels=True
+)
 async def clearchannel(
     interaction: discord.Interaction
 ):
     channel = interaction.channel
 
-    if not isinstance(channel, discord.TextChannel):
-        await send_embed(
-            interaction,
-            "❌ Error",
-            "This command only works in text channels.",
-            True
-        )
-        return
+    await interaction.response.send_message(
+        "🧹 Clearing this channel...",
+        ephemeral=True
+    )
 
     try:
         new_channel = await channel.clone(
             reason=f"Channel cleared by {interaction.user}"
+        )
+
+        await new_channel.edit(
+            position=channel.position
         )
 
         await channel.delete(
@@ -1267,27 +1284,33 @@ async def clearchannel(
         )
 
         await new_channel.send(
-            f"🧹 Channel cleared by {interaction.user.mention}."
+            "🧹 **Channel cleared!**"
         )
 
     except discord.Forbidden:
-        if not interaction.response.is_done():
-            await send_embed(
-                interaction,
-                "❌ Permission Error",
-                "I need Manage Channels permission.",
-                True
-            )
+        await interaction.followup.send(
+            "❌ I don't have permission to manage this channel.",
+            ephemeral=True
+        )
 
+    except discord.HTTPException:
+        await interaction.followup.send(
+            "❌ Discord rejected the channel operation.",
+            ephemeral=True
+        )
+
+
+# =========================
+#        SLOWMODE
+# =========================
 
 @bot.tree.command(
     name="slowmode",
     description="Set channel slowmode."
 )
-@app_commands.describe(
-    seconds="Slowmode from 0 to 21600 seconds."
+@app_commands.checks.has_permissions(
+    manage_channels=True
 )
-@app_commands.checks.has_permissions(manage_channels=True)
 async def slowmode(
     interaction: discord.Interaction,
     seconds: app_commands.Range[int, 0, 21600]
@@ -1297,108 +1320,115 @@ async def slowmode(
             slowmode_delay=seconds
         )
 
-        await send_embed(
-            interaction,
-            "🐌 Slowmode Updated",
-            f"Slowmode is now **{seconds} seconds**."
+        await interaction.response.send_message(
+            f"🐌 Slowmode set to **{seconds} seconds**."
         )
 
     except discord.Forbidden:
-        await send_embed(
-            interaction,
-            "❌ Permission Error",
-            "I need Manage Channels permission.",
-            True
+        await interaction.response.send_message(
+            "❌ I don't have permission to edit this channel.",
+            ephemeral=True
         )
 
+
+# =========================
+#           LOCK
+# =========================
 
 @bot.tree.command(
     name="lock",
     description="Lock the current channel."
 )
-@app_commands.checks.has_permissions(manage_channels=True)
+@app_commands.checks.has_permissions(
+    manage_channels=True
+)
 async def lock(
     interaction: discord.Interaction
 ):
-    channel = interaction.channel
-
-    overwrite = channel.overwrites_for(
-        interaction.guild.default_role
+    overwrite = (
+        interaction.channel.overwrites_for(
+            interaction.guild.default_role
+        )
     )
 
     overwrite.send_messages = False
 
     try:
-        await channel.set_permissions(
+        await interaction.channel.set_permissions(
             interaction.guild.default_role,
             overwrite=overwrite
         )
 
-        await send_embed(
-            interaction,
-            "🔒 Channel Locked",
-            "Members can no longer send messages."
+        await interaction.response.send_message(
+            "🔒 Channel locked."
         )
 
     except discord.Forbidden:
-        await send_embed(
-            interaction,
-            "❌ Permission Error",
-            "I cannot change this channel.",
-            True
+        await interaction.response.send_message(
+            "❌ I don't have permission to lock this channel.",
+            ephemeral=True
         )
 
+
+# =========================
+#          UNLOCK
+# =========================
 
 @bot.tree.command(
     name="unlock",
     description="Unlock the current channel."
 )
-@app_commands.checks.has_permissions(manage_channels=True)
+@app_commands.checks.has_permissions(
+    manage_channels=True
+)
 async def unlock(
     interaction: discord.Interaction
 ):
-    channel = interaction.channel
-
-    overwrite = channel.overwrites_for(
-        interaction.guild.default_role
+    overwrite = (
+        interaction.channel.overwrites_for(
+            interaction.guild.default_role
+        )
     )
 
     overwrite.send_messages = None
 
     try:
-        await channel.set_permissions(
+        await interaction.channel.set_permissions(
             interaction.guild.default_role,
             overwrite=overwrite
         )
 
-        await send_embed(
-            interaction,
-            "🔓 Channel Unlocked",
-            "Members can send messages again."
+        await interaction.response.send_message(
+            "🔓 Channel unlocked."
         )
 
     except discord.Forbidden:
-        await send_embed(
-            interaction,
-            "❌ Permission Error",
-            "I cannot change this channel.",
-            True
+        await interaction.response.send_message(
+            "❌ I don't have permission to unlock this channel.",
+            ephemeral=True
         )
 
 
-# =========================================================
-# WIPE CONFIRMATION
-# =========================================================
+# =========================
+#         END PART 4
+# =========================
+# =========================
+#        START PART 5
+# =========================
+
+
+# =========================
+#        WIPE SYSTEM
+# =========================
 
 class WipeView(discord.ui.View):
 
     def __init__(self, author_id):
-        super().__init__(timeout=30)
+        super().__init__(timeout=60)
         self.author_id = author_id
 
     @discord.ui.button(
         label="Confirm Wipe",
-        emoji="💥",
         style=discord.ButtonStyle.danger
     )
     async def confirm(
@@ -1408,76 +1438,59 @@ class WipeView(discord.ui.View):
     ):
         if interaction.user.id != self.author_id:
             await interaction.response.send_message(
-                "❌ Only the person who started the wipe can confirm it.",
+                "❌ You cannot use this button.",
                 ephemeral=True
             )
             return
 
         guild = interaction.guild
-
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message(
-                "❌ Administrator permission required.",
-                ephemeral=True
-            )
-            return
-
-        if guild.me is None:
-            await interaction.response.send_message(
-                "❌ I cannot find my server member.",
-                ephemeral=True
-            )
-            return
-
-        if not guild.me.guild_permissions.manage_channels:
-            await interaction.response.send_message(
-                "❌ I need Manage Channels permission.",
-                ephemeral=True
-            )
-            return
-
-        if not guild.me.guild_permissions.manage_roles:
-            await interaction.response.send_message(
-                "❌ I need Manage Roles permission.",
-                ephemeral=True
-            )
-            return
+        bot_member = guild.me
 
         await interaction.response.edit_message(
-            content="💥 **Wiping channels and removable roles...**",
+            content="🧨 **Wiping the server...**",
             view=None
         )
 
-        # Delete channels
-        for channel in list(guild.channels):
-            try:
-                await channel.delete(
-                    reason=f"Server wipe by {interaction.user}"
-                )
-            except (discord.Forbidden, discord.HTTPException):
-                pass
+        # Delete channels and categories
+        if bot_member.guild_permissions.manage_channels:
+
+            for channel in list(guild.channels):
+                try:
+                    await channel.delete(
+                        reason=f"Server wipe by {interaction.user}"
+                    )
+                except (
+                    discord.Forbidden,
+                    discord.HTTPException
+                ):
+                    pass
 
         # Delete removable roles
-        for role in list(guild.roles):
-            if role.is_default():
-                continue
+        if bot_member.guild_permissions.manage_roles:
 
-            if role.managed:
-                continue
+            for role in list(guild.roles):
 
-            if role >= guild.me.top_role:
-                continue
+                if role.is_default():
+                    continue
 
-            try:
-                await role.delete(
-                    reason=f"Server wipe by {interaction.user}"
-                )
-            except (discord.Forbidden, discord.HTTPException):
-                pass
+                if role.managed:
+                    continue
+
+                if role >= bot_member.top_role:
+                    continue
+
+                try:
+                    await role.delete(
+                        reason=f"Server wipe by {interaction.user}"
+                    )
+                except (
+                    discord.Forbidden,
+                    discord.HTTPException
+                ):
+                    pass
 
     @discord.ui.button(
         label="Cancel",
-        emoji="❌",
         style=discord.ButtonStyle.secondary
     )
     async def cancel(
@@ -1487,7 +1500,7 @@ class WipeView(discord.ui.View):
     ):
         if interaction.user.id != self.author_id:
             await interaction.response.send_message(
-                "❌ Only the person who started the wipe can cancel it.",
+                "❌ You cannot use this button.",
                 ephemeral=True
             )
             return
@@ -1500,143 +1513,857 @@ class WipeView(discord.ui.View):
 
 @bot.tree.command(
     name="wipe",
-    description="Wipe channels and removable roles."
+    description="Wipe removable channels and roles."
 )
-@app_commands.checks.has_permissions(administrator=True)
+@app_commands.checks.has_permissions(
+    administrator=True
+)
 async def wipe(
     interaction: discord.Interaction
 ):
-    guild = interaction.guild
 
-    if guild.me is None:
-        await send_embed(
-            interaction,
-            "❌ Error",
-            "I cannot find my server member.",
-            True
-        )
-        return
-
-    if not guild.me.guild_permissions.manage_channels:
-        await send_embed(
-            interaction,
-            "❌ Missing Permission",
-            "I need **Manage Channels**.",
-            True
-        )
-        return
-
-    if not guild.me.guild_permissions.manage_roles:
-        await send_embed(
-            interaction,
-            "❌ Missing Permission",
-            "I need **Manage Roles**.",
-            True
-        )
-        return
-
-    view = WipeView(interaction.user.id)
+    embed = discord.Embed(
+        title="⚠️ SERVER WIPE",
+        description=(
+            "This will delete:\n"
+            "• All removable channels\n"
+            "• All removable categories\n"
+            "• All removable roles\n\n"
+            "⚠️ **The Discord server itself will NOT be deleted.**\n"
+            "⚠️ This action cannot be undone."
+        ),
+        color=discord.Color.red()
+    )
 
     await interaction.response.send_message(
-        "⚠️ **SERVER WIPE WARNING**\n\n"
-        "This will delete the server's channels/categories and removable roles.\n\n"
-        "**The Discord server itself will NOT be deleted.**\n\n"
-        "Press **Confirm Wipe** to continue.",
-        view=view,
+        embed=embed,
+        view=WipeView(interaction.user.id),
         ephemeral=True
     )
-# =========================================================
-# TICKET HELPERS
-# =========================================================
 
-def find_user_ticket(guild, user_id):
-    topic_text = f"ticket_owner:{user_id}"
 
-    for channel in guild.text_channels:
-        if channel.topic == topic_text:
+# =========================
+#          PING
+# =========================
+
+@bot.tree.command(
+    name="ping",
+    description="Check SECURITY's latency."
+)
+async def ping(
+    interaction: discord.Interaction
+):
+
+    latency = round(
+        bot.latency * 1000
+    )
+
+    await interaction.response.send_message(
+        f"🏓 **Pong!** `{latency}ms`"
+    )
+
+
+# =========================
+#       SERVER INFO
+# =========================
+
+@bot.tree.command(
+    name="serverinfo",
+    description="Show server information."
+)
+async def serverinfo(
+    interaction: discord.Interaction
+):
+
+    guild = interaction.guild
+
+    embed = discord.Embed(
+        title=f"📊 {guild.name}",
+        color=discord.Color.blurple()
+    )
+
+    embed.add_field(
+        name="👑 Owner",
+        value=(
+            guild.owner.mention
+            if guild.owner
+            else "Unknown"
+        ),
+        inline=True
+    )
+
+    embed.add_field(
+        name="👥 Members",
+        value=str(
+            guild.member_count
+        ),
+        inline=True
+    )
+
+    embed.add_field(
+        name="💬 Channels",
+        value=str(
+            len(guild.channels)
+        ),
+        inline=True
+    )
+
+    embed.add_field(
+        name="🎭 Roles",
+        value=str(
+            len(guild.roles)
+        ),
+        inline=True
+    )
+
+    embed.add_field(
+        name="🆔 Server ID",
+        value=str(
+            guild.id
+        ),
+        inline=True
+    )
+
+    if guild.icon:
+        embed.set_thumbnail(
+            url=guild.icon.url
+        )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+
+# =========================
+#         USER INFO
+# =========================
+
+@bot.tree.command(
+    name="userinfo",
+    description="Show information about a user."
+)
+async def userinfo(
+    interaction: discord.Interaction,
+    member: Optional[discord.Member] = None
+):
+
+    member = member or interaction.user
+
+    embed = discord.Embed(
+        title=f"👤 {member}",
+        color=discord.Color.blurple()
+    )
+
+    embed.set_thumbnail(
+        url=member.display_avatar.url
+    )
+
+    embed.add_field(
+        name="Username",
+        value=member.name,
+        inline=True
+    )
+
+    embed.add_field(
+        name="User ID",
+        value=str(member.id),
+        inline=True
+    )
+
+    embed.add_field(
+        name="Top Role",
+        value=member.top_role.mention,
+        inline=True
+    )
+
+    if member.joined_at:
+        embed.add_field(
+            name="Joined Server",
+            value=discord.utils.format_dt(
+                member.joined_at,
+                "R"
+            ),
+            inline=False
+        )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+
+# =========================
+#           AVATAR
+# =========================
+
+@bot.tree.command(
+    name="avatar",
+    description="Show a user's avatar."
+)
+async def avatar(
+    interaction: discord.Interaction,
+    member: Optional[discord.Member] = None
+):
+
+    member = member or interaction.user
+
+    embed = discord.Embed(
+        title=f"🖼️ {member.display_name}'s Avatar",
+        color=discord.Color.blurple()
+    )
+
+    embed.set_image(
+        url=member.display_avatar.url
+    )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+
+# =========================
+#        SERVER ICON
+# =========================
+
+@bot.tree.command(
+    name="servericon",
+    description="Show the server icon."
+)
+async def servericon(
+    interaction: discord.Interaction
+):
+
+    if not interaction.guild.icon:
+        await interaction.response.send_message(
+            "❌ This server doesn't have an icon."
+        )
+        return
+
+    embed = discord.Embed(
+        title="🖼️ Server Icon",
+        color=discord.Color.blurple()
+    )
+
+    embed.set_image(
+        url=interaction.guild.icon.url
+    )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+
+# =========================
+#          BOT INFO
+# =========================
+
+@bot.tree.command(
+    name="botinfo",
+    description="Show SECURITY information."
+)
+async def botinfo(
+    interaction: discord.Interaction
+):
+
+    embed = discord.Embed(
+        title="🛡️ SECURITY",
+        description=(
+            "Security, moderation and "
+            "server management bot."
+        ),
+        color=discord.Color.blurple()
+    )
+
+    embed.add_field(
+        name="Servers",
+        value=str(
+            len(bot.guilds)
+        ),
+        inline=True
+    )
+
+    embed.add_field(
+        name="Commands",
+        value=str(
+            len(bot.tree.get_commands())
+        ),
+        inline=True
+    )
+
+    embed.add_field(
+        name="Library",
+        value="discord.py",
+        inline=True
+    )
+
+    embed.set_thumbnail(
+        url=bot.user.display_avatar.url
+    )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+
+# =========================
+#           SAY
+# =========================
+
+@bot.tree.command(
+    name="say",
+    description="Make SECURITY send a message."
+)
+@app_commands.checks.has_permissions(
+    manage_messages=True
+)
+async def say(
+    interaction: discord.Interaction,
+    message: str
+):
+
+    await interaction.response.send_message(
+        "✅ Message sent.",
+        ephemeral=True
+    )
+
+    await interaction.channel.send(
+        message
+    )
+
+
+# =========================
+#        ANNOUNCE
+# =========================
+
+@bot.tree.command(
+    name="announce",
+    description="Send an announcement."
+)
+@app_commands.checks.has_permissions(
+    manage_messages=True
+)
+async def announce(
+    interaction: discord.Interaction,
+    message: str
+):
+
+    embed = discord.Embed(
+        title="📢 Announcement",
+        description=message,
+        color=discord.Color.blurple()
+    )
+
+    await interaction.response.send_message(
+        "✅ Announcement sent.",
+        ephemeral=True
+    )
+
+    await interaction.channel.send(
+        embed=embed
+    )
+
+
+# =========================
+#         END PART 5
+# =========================
+# =========================
+#        START PART 6
+# =========================
+
+# =========================
+#        LEVEL SYSTEM
+# =========================
+
+def get_level_data(guild_id):
+    settings = get_guild_config(guild_id)
+
+    if "levels" not in settings:
+        settings["levels"] = {
+            "enabled": True,
+            "channel": None,
+            "message": "🎉 {user} reached **Level {level}**!"
+        }
+
+    if "xp" not in settings:
+        settings["xp"] = {}
+
+    return settings
+
+
+def get_user_xp(guild_id, user_id):
+    settings = get_level_data(guild_id)
+
+    user_id = str(user_id)
+
+    if user_id not in settings["xp"]:
+        settings["xp"][user_id] = {
+            "xp": 0,
+            "level": 0
+        }
+
+    return settings["xp"][user_id]
+
+
+def calculate_level(xp):
+    return int((xp / 100) ** 0.5)
+
+
+def level_required(level):
+    return level * level * 100
+
+
+def add_xp(guild_id, user_id, amount):
+    settings = get_level_data(guild_id)
+
+    data = get_user_xp(
+        guild_id,
+        user_id
+    )
+
+    old_level = data["level"]
+
+    data["xp"] += amount
+
+    new_level = calculate_level(
+        data["xp"]
+    )
+
+    data["level"] = new_level
+
+    save_config()
+
+    return (
+        data,
+        old_level,
+        new_level
+    )
+
+
+# =========================
+#          RANK
+# =========================
+
+@bot.tree.command(
+    name="rank",
+    description="Show your level and XP."
+)
+async def rank(
+    interaction: discord.Interaction
+):
+
+    data = get_user_xp(
+        interaction.guild.id,
+        interaction.user.id
+    )
+
+    xp = data["xp"]
+    level = data["level"]
+
+    current_level_xp = (
+        level_required(level)
+    )
+
+    next_level_xp = (
+        level_required(level + 1)
+    )
+
+    progress = (
+        xp - current_level_xp
+    )
+
+    needed = (
+        next_level_xp - current_level_xp
+    )
+
+    embed = discord.Embed(
+        title=f"🏆 {interaction.user.display_name}'s Rank",
+        color=discord.Color.blurple()
+    )
+
+    embed.set_thumbnail(
+        url=interaction.user.display_avatar.url
+    )
+
+    embed.add_field(
+        name="⭐ Level",
+        value=str(level),
+        inline=True
+    )
+
+    embed.add_field(
+        name="✨ XP",
+        value=f"{xp:,}",
+        inline=True
+    )
+
+    embed.add_field(
+        name="📈 Progress",
+        value=f"{progress:,} / {needed:,} XP",
+        inline=False
+    )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+
+# =========================
+#         LEVEL
+# =========================
+
+@bot.tree.command(
+    name="level",
+    description="Show another member's level."
+)
+async def level(
+    interaction: discord.Interaction,
+    member: discord.Member
+):
+
+    data = get_user_xp(
+        interaction.guild.id,
+        member.id
+    )
+
+    embed = discord.Embed(
+        title=f"🏆 {member.display_name}'s Level",
+        color=discord.Color.blurple()
+    )
+
+    embed.set_thumbnail(
+        url=member.display_avatar.url
+    )
+
+    embed.add_field(
+        name="⭐ Level",
+        value=str(data["level"]),
+        inline=True
+    )
+
+    embed.add_field(
+        name="✨ XP",
+        value=f"{data['xp']:,}",
+        inline=True
+    )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+
+# =========================
+#       LEADERBOARD
+# =========================
+
+@bot.tree.command(
+    name="leaderboard",
+    description="Show the server XP leaderboard."
+)
+async def leaderboard(
+    interaction: discord.Interaction
+):
+
+    settings = get_level_data(
+        interaction.guild.id
+    )
+
+    xp_data = settings["xp"]
+
+    if not xp_data:
+        await interaction.response.send_message(
+            "📊 There are no XP records yet."
+        )
+        return
+
+    sorted_users = sorted(
+        xp_data.items(),
+        key=lambda item: item[1]["xp"],
+        reverse=True
+    )
+
+    lines = []
+
+    for position, (user_id, data) in enumerate(
+        sorted_users[:10],
+        start=1
+    ):
+
+        member = interaction.guild.get_member(
+            int(user_id)
+        )
+
+        if member:
+            name = member.display_name
+        else:
+            name = f"User {user_id}"
+
+        lines.append(
+            f"**{position}.** {name} — "
+            f"Level {data['level']} • "
+            f"{data['xp']:,} XP"
+        )
+
+    embed = discord.Embed(
+        title="🏆 XP Leaderboard",
+        description="\n".join(lines),
+        color=discord.Color.blurple()
+    )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+
+# =========================
+#     LEVEL CHANNEL
+# =========================
+
+@bot.tree.command(
+    name="setlevelchannel",
+    description="Set the level-up channel."
+)
+@app_commands.checks.has_permissions(
+    manage_guild=True
+)
+async def setlevelchannel(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel
+):
+
+    settings = get_level_data(
+        interaction.guild.id
+    )
+
+    settings["levels"]["channel"] = channel.id
+
+    save_config()
+
+    await interaction.response.send_message(
+        f"✅ Level-up channel set to {channel.mention}.",
+        ephemeral=True
+    )
+
+
+# =========================
+#     LEVEL MESSAGE
+# =========================
+
+@bot.tree.command(
+    name="setlevelmessage",
+    description="Set the level-up message."
+)
+@app_commands.checks.has_permissions(
+    manage_guild=True
+)
+async def setlevelmessage(
+    interaction: discord.Interaction,
+    text: str
+):
+
+    settings = get_level_data(
+        interaction.guild.id
+    )
+
+    settings["levels"]["message"] = text
+
+    save_config()
+
+    await interaction.response.send_message(
+        "✅ Level-up message updated.",
+        ephemeral=True
+    )
+
+
+# =========================
+#       TOGGLE LEVELS
+# =========================
+
+@bot.tree.command(
+    name="togglelevels",
+    description="Enable or disable the level system."
+)
+@app_commands.checks.has_permissions(
+    manage_guild=True
+)
+async def togglelevels(
+    interaction: discord.Interaction,
+    enabled: bool
+):
+
+    settings = get_level_data(
+        interaction.guild.id
+    )
+
+    settings["levels"]["enabled"] = enabled
+
+    save_config()
+
+    status = (
+        "enabled 🟢"
+        if enabled
+        else "disabled 🔴"
+    )
+
+    await interaction.response.send_message(
+        f"✅ Level system is now **{status}**.",
+        ephemeral=True
+    )
+
+
+# =========================
+#        SET LEVEL
+# =========================
+
+@bot.tree.command(
+    name="setlevel",
+    description="Set a member's level."
+)
+@app_commands.checks.has_permissions(
+    manage_guild=True
+)
+async def setlevel(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    amount: app_commands.Range[int, 0, 1000]
+):
+
+    data = get_user_xp(
+        interaction.guild.id,
+        member.id
+    )
+
+    data["level"] = amount
+    data["xp"] = level_required(
+        amount
+    )
+
+    save_config()
+
+    await interaction.response.send_message(
+        f"✅ Set {member.mention}'s level to **{amount}**.",
+        ephemeral=True
+    )
+
+
+# =========================
+#          SET XP
+# =========================
+
+@bot.tree.command(
+    name="setxp",
+    description="Set a member's XP."
+)
+@app_commands.checks.has_permissions(
+    manage_guild=True
+)
+async def setxp(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    amount: app_commands.Range[int, 0, 100000000]
+):
+
+    data = get_user_xp(
+        interaction.guild.id,
+        member.id
+    )
+
+    data["xp"] = amount
+    data["level"] = calculate_level(
+        amount
+    )
+
+    save_config()
+
+    await interaction.response.send_message(
+        f"✅ Set {member.mention}'s XP to **{amount:,}**.",
+        ephemeral=True
+    )
+
+
+# =========================
+#         RESET XP
+# =========================
+
+@bot.tree.command(
+    name="resetxp",
+    description="Reset a member's XP."
+)
+@app_commands.checks.has_permissions(
+    manage_guild=True
+)
+async def resetxp(
+    interaction: discord.Interaction,
+    member: discord.Member
+):
+
+    settings = get_level_data(
+        interaction.guild.id
+    )
+
+    user_id = str(member.id)
+
+    settings["xp"].pop(
+        user_id,
+        None
+    )
+
+    save_config()
+
+    await interaction.response.send_message(
+        f"♻️ Reset {member.mention}'s XP and level.",
+        ephemeral=True
+    )
+
+
+# =========================
+#         END PART 6
+# =========================
+# =========================
+#        START PART 7
+# =========================
+
+# =========================
+#       TICKET HELPERS
+# =========================
+
+def get_ticket_settings(guild_id):
+    settings = get_guild_config(guild_id)
+
+    if "tickets" not in settings:
+        settings["tickets"] = {
+            "category": None,
+            "staff_role": None
+        }
+
+    return settings
+
+
+def get_user_ticket(guild, user):
+    settings = get_ticket_settings(guild.id)
+
+    category_id = settings["tickets"].get(
+        "category"
+    )
+
+    if not category_id:
+        return None
+
+    category = guild.get_channel(
+        int(category_id)
+    )
+
+    if category is None:
+        return None
+
+    for channel in category.channels:
+        if channel.topic == f"ticket:{user.id}":
             return channel
 
     return None
 
 
-# =========================================================
-# CLOSE TICKET VIEW
-# =========================================================
-
-class TicketCloseView(discord.ui.View):
-
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(
-        label="Close Ticket",
-        emoji="🔒",
-        style=discord.ButtonStyle.danger,
-        custom_id="security_ticket_close"
-    )
-    async def close_ticket(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
-    ):
-        channel = interaction.channel
-
-        if not isinstance(channel, discord.TextChannel):
-            await interaction.response.send_message(
-                "❌ This is not a ticket channel.",
-                ephemeral=True
-            )
-            return
-
-        if not channel.topic or not channel.topic.startswith(
-            "ticket_owner:"
-        ):
-            await interaction.response.send_message(
-                "❌ This is not a ticket channel.",
-                ephemeral=True
-            )
-            return
-
-        owner_id_text = channel.topic.split(
-            "ticket_owner:",
-            1
-        )[1]
-
-        try:
-            owner_id = int(owner_id_text)
-        except ValueError:
-            owner_id = None
-
-        allowed = (
-            interaction.user.id == owner_id
-            or interaction.user.guild_permissions.administrator
-            or interaction.user.guild_permissions.manage_channels
-        )
-
-        if not allowed:
-            await interaction.response.send_message(
-                "❌ You cannot close this ticket.",
-                ephemeral=True
-            )
-            return
-
-        await interaction.response.send_message(
-            "🔒 Ticket closing in **5 seconds**..."
-        )
-
-        await asyncio.sleep(5)
-
-        try:
-            await channel.delete(
-                reason=f"Ticket closed by {interaction.user}"
-            )
-        except (discord.Forbidden, discord.HTTPException):
-            pass
-
-
-# =========================================================
-# CREATE TICKET VIEW
-# =========================================================
+# =========================
+#      CREATE TICKET
+# =========================
 
 class TicketCreateView(discord.ui.View):
 
@@ -1654,266 +2381,287 @@ class TicketCreateView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button
     ):
+
         guild = interaction.guild
-        member = interaction.user
 
         if guild is None:
             await interaction.response.send_message(
-                "❌ This only works inside a server.",
+                "❌ This can only be used inside a server.",
                 ephemeral=True
             )
             return
 
-        existing = find_user_ticket(
+        settings = get_ticket_settings(
+            guild.id
+        )
+
+        category_id = settings["tickets"].get(
+            "category"
+        )
+
+        if not category_id:
+            await interaction.response.send_message(
+                "❌ Tickets have not been configured.",
+                ephemeral=True
+            )
+            return
+
+        category = guild.get_channel(
+            int(category_id)
+        )
+
+        if not isinstance(
+            category,
+            discord.CategoryChannel
+        ):
+            await interaction.response.send_message(
+                "❌ The ticket category is invalid.",
+                ephemeral=True
+            )
+            return
+
+        existing = get_user_ticket(
             guild,
-            member.id
+            interaction.user
         )
 
         if existing:
             await interaction.response.send_message(
-                f"🎫 You already have a ticket: {existing.mention}",
+                f"❌ You already have a ticket: {existing.mention}",
                 ephemeral=True
             )
             return
 
-        settings = get_guild_config(guild.id)
+        staff_role = None
 
-        category_id = settings.get("ticket_category")
-        staff_role_id = settings.get("ticket_staff_role")
+        staff_role_id = settings["tickets"].get(
+            "staff_role"
+        )
 
-        category = None
-
-        if category_id:
-            found = guild.get_channel(category_id)
-
-            if isinstance(found, discord.CategoryChannel):
-                category = found
-
-        if category is None:
-            await interaction.response.send_message(
-                "❌ Tickets have not been configured correctly. "
-                "An administrator should use `/ticket setup`.",
-                ephemeral=True
-            )
-            return
-
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(
-                view_channel=False
-            ),
-            member: discord.PermissionOverwrite(
-                view_channel=True,
-                send_messages=True,
-                read_message_history=True,
-                attach_files=True,
-                embed_links=True
-            )
-        }
-
-        # Staff role
         if staff_role_id:
             staff_role = guild.get_role(
-                staff_role_id
+                int(staff_role_id)
             )
 
-            if staff_role:
-                overwrites[staff_role] = discord.PermissionOverwrite(
+        overwrites = {
+            guild.default_role:
+                discord.PermissionOverwrite(
+                    view_channel=False
+                ),
+            interaction.user:
+                discord.PermissionOverwrite(
+                    view_channel=True,
+                    send_messages=True,
+                    read_message_history=True
+                )
+        }
+
+        if staff_role:
+            overwrites[staff_role] = (
+                discord.PermissionOverwrite(
                     view_channel=True,
                     send_messages=True,
                     read_message_history=True,
-                    attach_files=True,
-                    embed_links=True
+                    manage_messages=True
                 )
-
-        # Bot permissions
-        if guild.me:
-            overwrites[guild.me] = discord.PermissionOverwrite(
-                view_channel=True,
-                send_messages=True,
-                read_message_history=True,
-                manage_channels=True
             )
 
         try:
-            ticket_channel = await guild.create_text_channel(
-                name=f"ticket-{member.id}",
+            channel = await guild.create_text_channel(
+                name=f"ticket-{interaction.user.name}",
                 category=category,
-                topic=f"ticket_owner:{member.id}",
                 overwrites=overwrites,
-                reason=f"Ticket created by {member}"
+                topic=f"ticket:{interaction.user.id}",
+                reason=f"Ticket created by {interaction.user}"
             )
 
-        except discord.Forbidden:
-            await interaction.response.send_message(
-                "❌ I cannot create tickets. Give me **Manage Channels**.",
-                ephemeral=True
-            )
-            return
-
-        except discord.HTTPException:
-            await interaction.response.send_message(
-                "❌ Discord rejected the ticket creation.",
-                ephemeral=True
-            )
-            return
-
-        embed = discord.Embed(
-            title="🎫 Support Ticket",
-            description=(
-                f"Welcome {member.mention}!\n\n"
-                "Please explain what you need help with.\n\n"
-                "A staff member will help you soon.\n\n"
-                "When finished, click **🔒 Close Ticket**."
-            ),
-            color=discord.Color.blurple()
-        )
-
-        embed.set_thumbnail(
-            url=member.display_avatar.url
-        )
-
-        embed.set_footer(
-            text=f"Opened by {member}"
-        )
-
-        try:
-            await ticket_channel.send(
-                content=member.mention,
-                embed=embed,
+            await channel.send(
+                f"🎫 Welcome {interaction.user.mention}!\n\n"
+                "Please describe your issue and our staff "
+                "will help you shortly.",
                 view=TicketCloseView()
             )
 
             await interaction.response.send_message(
-                f"✅ Ticket created: {ticket_channel.mention}",
+                f"✅ Ticket created: {channel.mention}",
                 ephemeral=True
             )
 
-        except discord.HTTPException:
-            try:
-                await ticket_channel.delete(
-                    reason="Ticket message failed"
-                )
-            except (discord.Forbidden, discord.HTTPException):
-                pass
-
+        except discord.Forbidden:
             await interaction.response.send_message(
-                "❌ The ticket could not be completed.",
+                "❌ I don't have permission to create ticket channels.",
                 ephemeral=True
             )
 
 
-# =========================================================
-# TICKET COMMAND GROUP
-# =========================================================
+# =========================
+#       CLOSE TICKET
+# =========================
+
+class TicketCloseView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Close Ticket",
+        emoji="🔒",
+        style=discord.ButtonStyle.danger,
+        custom_id="security_ticket_close"
+    )
+    async def close_ticket(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        channel = interaction.channel
+
+        if not isinstance(
+            channel,
+            discord.TextChannel
+        ):
+            await interaction.response.send_message(
+                "❌ This is not a ticket channel.",
+                ephemeral=True
+            )
+            return
+
+        if not channel.topic:
+            await interaction.response.send_message(
+                "❌ This is not a ticket channel.",
+                ephemeral=True
+            )
+            return
+
+        if not channel.topic.startswith(
+            "ticket:"
+        ):
+            await interaction.response.send_message(
+                "❌ This is not a ticket channel.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_message(
+            "🔒 Closing ticket..."
+        )
+
+        await asyncio.sleep(2)
+
+        try:
+            await channel.delete(
+                reason=f"Ticket closed by {interaction.user}"
+            )
+
+        except discord.Forbidden:
+            await interaction.followup.send(
+                "❌ I don't have permission to delete this ticket.",
+                ephemeral=True
+            )
+
+
+# =========================
+#        TICKET GROUP
+# =========================
 
 ticket_group = app_commands.Group(
     name="ticket",
     description="Ticket system commands."
 )
 
+bot.tree.add_command(
+    ticket_group
+)
+
+
+# =========================
+#       TICKET SETUP
+# =========================
 
 @ticket_group.command(
     name="setup",
-    description="Set up the ticket category and staff role."
+    description="Configure the ticket system."
 )
-@app_commands.describe(
-    category="Category where tickets will be created.",
-    staff_role="Optional staff role."
+@app_commands.checks.has_permissions(
+    manage_guild=True
 )
-@app_commands.checks.has_permissions(manage_guild=True)
 async def ticket_setup(
     interaction: discord.Interaction,
     category: discord.CategoryChannel,
     staff_role: Optional[discord.Role] = None
 ):
-    settings = get_guild_config(
+
+    settings = get_ticket_settings(
         interaction.guild.id
     )
 
-    settings["ticket_category"] = category.id
+    settings["tickets"]["category"] = (
+        category.id
+    )
 
-    if staff_role:
-        if staff_role.is_default() or staff_role.managed:
-            await send_embed(
-                interaction,
-                "❌ Invalid Staff Role",
-                "Choose a normal server role.",
-                True
-            )
-            return
-
-        settings["ticket_staff_role"] = staff_role.id
-    else:
-        settings.pop(
-            "ticket_staff_role",
-            None
-        )
+    settings["tickets"]["staff_role"] = (
+        staff_role.id
+        if staff_role
+        else None
+    )
 
     save_config()
 
-    staff_text = (
-        staff_role.mention
-        if staff_role
-        else "No staff role"
+    if staff_role:
+        staff_text = staff_role.mention
+    else:
+        staff_text = "Not set"
+
+    await interaction.response.send_message(
+        "✅ **Ticket system configured!**\n\n"
+        f"📁 Category: {category.mention}\n"
+        f"👮 Staff role: {staff_text}",
+        ephemeral=True
     )
 
-    await send_embed(
-        interaction,
-        "🎫 Ticket Setup Complete",
-        (
-            f"**Category:** {category.mention}\n"
-            f"**Staff:** {staff_text}\n\n"
-            "Now use `/ticket panel`."
-        ),
-        True
-    )
 
+# =========================
+#       TICKET PANEL
+# =========================
 
 @ticket_group.command(
     name="panel",
     description="Send the ticket panel."
 )
-@app_commands.describe(
-    channel="Channel where the panel should be sent."
+@app_commands.checks.has_permissions(
+    manage_guild=True
 )
-@app_commands.checks.has_permissions(manage_guild=True)
 async def ticket_panel(
     interaction: discord.Interaction,
     channel: discord.TextChannel
 ):
-    settings = get_guild_config(
+
+    settings = get_ticket_settings(
         interaction.guild.id
     )
 
-    category_id = settings.get(
-        "ticket_category"
-    )
-
-    category = interaction.guild.get_channel(
-        category_id
-    ) if category_id else None
-
-    if not isinstance(
-        category,
-        discord.CategoryChannel
+    if not settings["tickets"].get(
+        "category"
     ):
-        await send_embed(
-            interaction,
-            "❌ Tickets Not Setup",
-            "Use `/ticket setup` first.",
-            True
+        await interaction.response.send_message(
+            "❌ Run `/ticket setup` first.",
+            ephemeral=True
         )
         return
 
     embed = discord.Embed(
-        title="🎫 Support Center",
+        title="🎫 Support Tickets",
         description=(
             "Need help?\n\n"
-            "Click **Create Ticket** below.\n\n"
-            "Your ticket will be private and visible "
-            "only to you, the bot, and the configured staff team."
+            "Click **Create Ticket** below "
+            "to open a private support ticket."
         ),
         color=discord.Color.blurple()
+    )
+
+    embed.set_footer(
+        text=f"{interaction.guild.name} • SECURITY"
     )
 
     try:
@@ -1922,21 +2670,21 @@ async def ticket_panel(
             view=TicketCreateView()
         )
 
-        await send_embed(
-            interaction,
-            "✅ Ticket Panel Sent",
-            f"Panel sent to {channel.mention}.",
-            True
+        await interaction.response.send_message(
+            f"✅ Ticket panel sent to {channel.mention}.",
+            ephemeral=True
         )
 
     except discord.Forbidden:
-        await send_embed(
-            interaction,
-            "❌ Permission Error",
-            "I cannot send messages in that channel.",
-            True
+        await interaction.response.send_message(
+            "❌ I cannot send messages in that channel.",
+            ephemeral=True
         )
 
+
+# =========================
+#        TICKET CLOSE
+# =========================
 
 @ticket_group.command(
     name="close",
@@ -1945,605 +2693,88 @@ async def ticket_panel(
 async def ticket_close(
     interaction: discord.Interaction
 ):
+
     channel = interaction.channel
 
-    if not isinstance(channel, discord.TextChannel):
-        await send_embed(
-            interaction,
-            "❌ Error",
-            "This is not a ticket channel.",
-            True
+    if not isinstance(
+        channel,
+        discord.TextChannel
+    ):
+        await interaction.response.send_message(
+            "❌ This is not a ticket channel.",
+            ephemeral=True
         )
         return
 
     if not channel.topic or not channel.topic.startswith(
-        "ticket_owner:"
+        "ticket:"
     ):
-        await send_embed(
-            interaction,
-            "❌ Error",
-            "This is not a ticket channel.",
-            True
-        )
-        return
-
-    owner_id_text = channel.topic.split(
-        "ticket_owner:",
-        1
-    )[1]
-
-    try:
-        owner_id = int(owner_id_text)
-    except ValueError:
-        owner_id = None
-
-    allowed = (
-        interaction.user.id == owner_id
-        or interaction.user.guild_permissions.administrator
-        or interaction.user.guild_permissions.manage_channels
-    )
-
-    if not allowed:
-        await send_embed(
-            interaction,
-            "❌ Not Allowed",
-            "You cannot close this ticket.",
-            True
+        await interaction.response.send_message(
+            "❌ This is not a ticket channel.",
+            ephemeral=True
         )
         return
 
     await interaction.response.send_message(
-        "🔒 Ticket closing in **5 seconds**..."
+        "🔒 Closing ticket..."
     )
 
-    await asyncio.sleep(5)
+    await asyncio.sleep(2)
 
     try:
         await channel.delete(
             reason=f"Ticket closed by {interaction.user}"
         )
-    except (discord.Forbidden, discord.HTTPException):
-        pass
+
+    except discord.Forbidden:
+        await interaction.followup.send(
+            "❌ I don't have permission to delete this ticket.",
+            ephemeral=True
+        )
 
 
-bot.tree.add_command(ticket_group)
-# =========================================================
-# LEVEL SYSTEM
-# =========================================================
+# =========================
+#         END PART 7
+# =========================
+# =========================
+#        START PART 8
+# =========================
 
-XP_COOLDOWN = {}
+# =========================
+#      SHOWCASE SYSTEM
+# =========================
 
-
-def get_level_data(guild_id, user_id):
+def get_showcase_settings(guild_id):
     settings = get_guild_config(guild_id)
 
-    levels = settings.setdefault(
-        "levels",
-        {}
-    )
-
-    user_id = str(user_id)
-
-    if user_id not in levels:
-        levels[user_id] = {
-            "xp": 0,
-            "level": 0
+    if "showcase" not in settings:
+        settings["showcase"] = {
+            "enabled": False,
+            "showcase_channel": None,
+            "judge_channel": None,
+            "judge_role": None,
+            "message": (
+                "🎬 Submit your TikTok below!"
+            )
         }
 
-    return levels[user_id]
+    return settings
 
 
-def xp_needed(level):
-    return 100 + (level * 50)
-
-
-def add_xp(guild_id, user_id, amount):
-    data = get_level_data(
-        guild_id,
-        user_id
-    )
-
-    data["xp"] += amount
-
-    leveled_up = False
-
-    while data["xp"] >= xp_needed(data["level"]):
-        data["xp"] -= xp_needed(data["level"])
-        data["level"] += 1
-        leveled_up = True
-
-    return data, leveled_up
-
-
-def level_message(
-    text,
-    member,
-    level
-):
-    return (
-        text
-        .replace("{user}", member.mention)
-        .replace("{username}", member.name)
-        .replace("{server}", member.guild.name)
-        .replace("{level}", str(level))
-    )
-
-
-# =========================================================
-# LEVEL MESSAGE LISTENER
-# =========================================================
-
-@bot.event
-async def on_message(message):
-
-    if message.author.bot:
-        return
-
-    if message.guild is None:
-        return
-
-    # Ignore empty messages
-    if not message.content.strip():
-        return
-
-    settings = get_guild_config(
-        message.guild.id
-    )
-
-    if settings.get(
-        "levels_enabled",
-        True
-    ):
-        key = (
-            message.guild.id,
-            message.author.id
-        )
-
-        now = asyncio.get_running_loop().time()
-        last = XP_COOLDOWN.get(key, 0)
-
-        # 60-second XP cooldown
-        if now - last >= 60:
-            XP_COOLDOWN[key] = now
-
-            amount = random.randint(15, 25)
-
-            data, leveled_up = add_xp(
-                message.guild.id,
-                message.author.id,
-                amount
-            )
-
-            save_config()
-
-            if leveled_up:
-                channel_id = settings.get(
-                    "level_channel"
-                )
-
-                channel = (
-                    message.guild.get_channel(channel_id)
-                    if channel_id
-                    else message.channel
-                )
-
-                if isinstance(
-                    channel,
-                    discord.TextChannel
-                ):
-                    text = settings.get(
-                        "level_message",
-                        "🎉 Congratulations {user}! "
-                        "You reached **Level {level}**!"
-                    )
-
-                    embed = discord.Embed(
-                        title="⭐ Level Up!",
-                        description=level_message(
-                            text,
-                            message.author,
-                            data["level"]
-                        ),
-                        color=discord.Color.gold()
-                    )
-
-                    embed.set_thumbnail(
-                        url=message.author.display_avatar.url
-                    )
-
-                    try:
-                        await channel.send(
-                            embed=embed
-                        )
-                    except discord.HTTPException:
-                        pass
-
-
-# =========================================================
-# RANK
-# =========================================================
-
-@bot.tree.command(
-    name="rank",
-    description="View your level and XP."
-)
-async def rank(
-    interaction: discord.Interaction
-):
-    data = get_level_data(
-        interaction.guild.id,
-        interaction.user.id
-    )
-
-    needed = xp_needed(
-        data["level"]
-    )
-
-    embed = discord.Embed(
-        title="⭐ Your Rank",
-        color=discord.Color.gold()
-    )
-
-    embed.set_thumbnail(
-        url=interaction.user.display_avatar.url
-    )
-
-    embed.add_field(
-        name="Level",
-        value=f"**{data['level']}**",
-        inline=True
-    )
-
-    embed.add_field(
-        name="XP",
-        value=f"**{data['xp']} / {needed}**",
-        inline=True
-    )
-
-    await interaction.response.send_message(
-        embed=embed
-    )
-
-
-# =========================================================
-# LEVEL
-# =========================================================
-
-@bot.tree.command(
-    name="level",
-    description="View another member's level."
-)
-@app_commands.describe(
-    member="Member to check."
-)
-async def level(
-    interaction: discord.Interaction,
-    member: Optional[discord.Member] = None
-):
-    member = member or interaction.user
-
-    data = get_level_data(
-        interaction.guild.id,
-        member.id
-    )
-
-    needed = xp_needed(
-        data["level"]
-    )
-
-    embed = discord.Embed(
-        title="⭐ Member Level",
-        description=member.mention,
-        color=discord.Color.gold()
-    )
-
-    embed.set_thumbnail(
-        url=member.display_avatar.url
-    )
-
-    embed.add_field(
-        name="Level",
-        value=f"**{data['level']}**",
-        inline=True
-    )
-
-    embed.add_field(
-        name="XP",
-        value=f"**{data['xp']} / {needed}**",
-        inline=True
-    )
-
-    await interaction.response.send_message(
-        embed=embed
-    )
-
-
-# =========================================================
-# LEADERBOARD
-# =========================================================
-
-@bot.tree.command(
-    name="leaderboard",
-    description="Show the server XP leaderboard."
-)
-async def leaderboard(
-    interaction: discord.Interaction
-):
-    settings = get_guild_config(
-        interaction.guild.id
-    )
-
-    levels = settings.get(
-        "levels",
-        {}
-    )
-
-    ranking = []
-
-    for user_id, data in levels.items():
-
-        try:
-            uid = int(user_id)
-        except ValueError:
-            continue
-
-        member = interaction.guild.get_member(uid)
-
-        if member:
-            ranking.append(
-                (
-                    data.get("level", 0),
-                    data.get("xp", 0),
-                    member
-                )
-            )
-
-    ranking.sort(
-        key=lambda item: (
-            item[0],
-            item[1]
-        ),
-        reverse=True
-    )
-
-    ranking = ranking[:10]
-
-    if not ranking:
-        await send_embed(
-            interaction,
-            "⭐ Leaderboard",
-            "Nobody has earned XP yet."
-        )
-        return
-
-    lines = []
-
-    for index, (lvl, xp, member) in enumerate(
-        ranking,
-        start=1
-    ):
-        lines.append(
-            f"**{index}.** {member.mention} — "
-            f"Level **{lvl}** • {xp} XP"
-        )
-
-    await send_embed(
-        interaction,
-        "🏆 XP Leaderboard",
-        "\n".join(lines)
-    )
-
-
-# =========================================================
-# LEVEL SETTINGS
-# =========================================================
-
-@bot.tree.command(
-    name="setlevelchannel",
-    description="Set the level-up channel."
-)
-@app_commands.describe(
-    channel="Channel for level-up messages."
-)
-@app_commands.checks.has_permissions(manage_guild=True)
-async def setlevelchannel(
-    interaction: discord.Interaction,
-    channel: discord.TextChannel
-):
-    settings = get_guild_config(
-        interaction.guild.id
-    )
-
-    settings["level_channel"] = channel.id
-
-    save_config()
-
-    await send_embed(
-        interaction,
-        "✅ Level Channel",
-        f"Level-ups will be announced in {channel.mention}.",
-        True
-    )
-
-
-@bot.tree.command(
-    name="setlevelmessage",
-    description="Customize the level-up message."
-)
-@app_commands.describe(
-    message="Use {user}, {username}, {server}, {level}."
-)
-@app_commands.checks.has_permissions(manage_guild=True)
-async def setlevelmessage(
-    interaction: discord.Interaction,
-    message: str
-):
-    settings = get_guild_config(
-        interaction.guild.id
-    )
-
-    settings["level_message"] = message
-
-    save_config()
-
-    await send_embed(
-        interaction,
-        "✅ Level Message Updated",
-        (
-            f"{message}\n\n"
-            "**Placeholders:** "
-            "`{user}` `{username}` `{server}` `{level}`"
-        ),
-        True
-    )
-
-
-@bot.tree.command(
-    name="togglelevels",
-    description="Turn the XP system on or off."
-)
-@app_commands.describe(
-    enabled="Enable or disable XP."
-)
-@app_commands.checks.has_permissions(manage_guild=True)
-async def togglelevels(
-    interaction: discord.Interaction,
-    enabled: bool
-):
-    settings = get_guild_config(
-        interaction.guild.id
-    )
-
-    settings["levels_enabled"] = enabled
-
-    save_config()
-
-    await send_embed(
-        interaction,
-        "⭐ Levels Updated",
-        f"Levels are now **{'ON' if enabled else 'OFF'}**.",
-        True
-    )
-
-
-@bot.tree.command(
-    name="setlevel",
-    description="Set a member's level."
-)
-@app_commands.describe(
-    member="Member.",
-    amount="New level."
-)
-@app_commands.checks.has_permissions(manage_guild=True)
-async def setlevel(
-    interaction: discord.Interaction,
-    member: discord.Member,
-    amount: app_commands.Range[int, 0, 100000]
-):
-    data = get_level_data(
-        interaction.guild.id,
-        member.id
-    )
-
-    data["level"] = amount
-    data["xp"] = 0
-
-    save_config()
-
-    await send_embed(
-        interaction,
-        "⭐ Level Set",
-        f"{member.mention} is now **Level {amount}**.",
-        True
-    )
-
-
-@bot.tree.command(
-    name="setxp",
-    description="Set a member's XP."
-)
-@app_commands.describe(
-    member="Member.",
-    amount="New XP."
-)
-@app_commands.checks.has_permissions(manage_guild=True)
-async def setxp(
-    interaction: discord.Interaction,
-    member: discord.Member,
-    amount: app_commands.Range[int, 0, 1000000000]
-):
-    data = get_level_data(
-        interaction.guild.id,
-        member.id
-    )
-
-    data["xp"] = amount
-
-    save_config()
-
-    await send_embed(
-        interaction,
-        "⭐ XP Set",
-        f"{member.mention} now has **{amount} XP**.",
-        True
-    )
-
-
-@bot.tree.command(
-    name="resetxp",
-    description="Reset a member's XP and level."
-)
-@app_commands.describe(
-    member="Member to reset."
-)
-@app_commands.checks.has_permissions(manage_guild=True)
-async def resetxp(
-    interaction: discord.Interaction,
-    member: discord.Member
-):
-    data = get_level_data(
-        interaction.guild.id,
-        member.id
-    )
-
-    data["xp"] = 0
-    data["level"] = 0
-
-    save_config()
-
-    await send_embed(
-        interaction,
-        "♻️ XP Reset",
-        f"{member.mention}'s XP and level were reset.",
-        True
-)
-# =========================================================
-# 🎬 TIKTOK SHOWCASE
-# =========================================================
-
-def is_tiktok_url(url):
-    url = url.strip().lower()
-
-    return (
-        url.startswith("https://www.tiktok.com/")
-        or url.startswith("https://tiktok.com/")
-        or url.startswith("https://vm.tiktok.com/")
-        or url.startswith("http://www.tiktok.com/")
-        or url.startswith("http://tiktok.com/")
-        or url.startswith("http://vm.tiktok.com/")
-    )
-
+# =========================
+#       TIKTOK MODAL
+# =========================
 
 class TikTokModal(discord.ui.Modal):
 
     def __init__(self):
         super().__init__(
-            title="Submit TikTok"
+            title="Submit a TikTok"
         )
 
         self.link = discord.ui.TextInput(
-            label="TikTok Video Link",
-            placeholder="Example: https://vm.tiktok.com/*******",
+            label="TikTok URL",
+            placeholder="https://www.tiktok.com/@user/video/...",
             required=True,
             max_length=500
         )
@@ -2554,97 +2785,114 @@ class TikTokModal(discord.ui.Modal):
         self,
         interaction: discord.Interaction
     ):
-        url = self.link.value.strip()
 
-        if not is_tiktok_url(url):
+        guild = interaction.guild
+
+        if guild is None:
             await interaction.response.send_message(
-                "❌ That is not a valid TikTok link.\n\n"
-                "Please paste a link like:\n"
-                "`https://vm.tiktok.com/*******`",
+                "❌ This can only be used inside a server.",
                 ephemeral=True
             )
             return
 
-        settings = get_guild_config(
-            interaction.guild.id
+        settings = get_showcase_settings(
+            guild.id
         )
 
-        if not settings.get(
-            "showcase_enabled",
+        if not settings["showcase"].get(
+            "enabled",
             False
         ):
             await interaction.response.send_message(
-                "❌ The TikTok showcase is currently disabled.",
+                "❌ TikTok showcase is currently disabled.",
                 ephemeral=True
             )
             return
 
-        channel_id = settings.get(
-            "showcase_channel"
+        url = extract_tiktok_link(
+            self.link.value
         )
 
-        channel = (
-            interaction.guild.get_channel(channel_id)
-            if channel_id
-            else None
+        if not url:
+            await interaction.response.send_message(
+                "❌ Please enter a valid TikTok link.",
+                ephemeral=True
+            )
+            return
+
+        judge_channel_id = settings["showcase"].get(
+            "judge_channel"
+        )
+
+        judge_role_id = settings["showcase"].get(
+            "judge_role"
+        )
+
+        if not judge_channel_id:
+            await interaction.response.send_message(
+                "❌ The judge channel has not been configured.",
+                ephemeral=True
+            )
+            return
+
+        judge_channel = guild.get_channel(
+            int(judge_channel_id)
         )
 
         if not isinstance(
-            channel,
+            judge_channel,
             discord.TextChannel
         ):
             await interaction.response.send_message(
-                "❌ The showcase channel is not configured.",
+                "❌ The judge channel is invalid.",
                 ephemeral=True
             )
             return
 
-        custom_text = settings.get(
-            "showcase_message",
-            "🎬 **New TikTok Submitted!**\n\n"
-            "Thanks for sharing your video!"
-        )
+        mention = ""
+
+        if judge_role_id:
+            role = guild.get_role(
+                int(judge_role_id)
+            )
+
+            if role:
+                mention = role.mention
 
         embed = discord.Embed(
-            title="🎬 TikTok Showcase",
+            title="🎬 New TikTok Submission",
             description=(
-                f"{custom_text}\n\n"
-                f"👤 **Creator:** {interaction.user.mention}\n"
-                f"🔗 **TikTok:** [Watch Video]({url})"
+                f"👤 **User:** {interaction.user.mention}\n\n"
+                f"🔗 **TikTok:** {url}"
             ),
             color=discord.Color.blurple()
         )
 
-        embed.set_thumbnail(
-            url=interaction.user.display_avatar.url
-        )
-
         embed.set_footer(
-            text=f"Submitted by {interaction.user}"
+            text=f"Submitted in {guild.name}"
         )
 
         try:
-            await channel.send(
+            await judge_channel.send(
+                content=mention,
                 embed=embed
             )
 
             await interaction.response.send_message(
-                f"✅ Your TikTok was submitted to {channel.mention}!",
+                "✅ Your TikTok was submitted!",
                 ephemeral=True
             )
 
         except discord.Forbidden:
             await interaction.response.send_message(
-                "❌ I cannot send messages in the showcase channel.",
+                "❌ I cannot send messages in the judge channel.",
                 ephemeral=True
             )
 
-        except discord.HTTPException:
-            await interaction.response.send_message(
-                "❌ Discord rejected the submission.",
-                ephemeral=True
-            )
 
+# =========================
+#      SHOWCASE BUTTON
+# =========================
 
 class ShowcaseView(discord.ui.View):
 
@@ -2653,7 +2901,7 @@ class ShowcaseView(discord.ui.View):
 
     @discord.ui.button(
         label="Submit TikTok",
-        emoji="🔗",
+        emoji="🎬",
         style=discord.ButtonStyle.primary,
         custom_id="security_showcase_submit"
     )
@@ -2662,195 +2910,221 @@ class ShowcaseView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button
     ):
-        settings = get_guild_config(
-            interaction.guild.id
-        )
-
-        if not settings.get(
-            "showcase_enabled",
-            False
-        ):
-            await interaction.response.send_message(
-                "❌ The showcase is currently disabled.",
-                ephemeral=True
-            )
-            return
 
         await interaction.response.send_modal(
             TikTokModal()
         )
 
 
-# =========================================================
-# SHOWCASE COMMAND GROUP
-# =========================================================
+# =========================
+#      SHOWCASE GROUP
+# =========================
 
 showcase_group = app_commands.Group(
     name="showcase",
-    description="TikTok edit/video showcase commands."
+    description="TikTok showcase commands."
 )
 
+bot.tree.add_command(
+    showcase_group
+)
+
+
+# =========================
+#      SHOWCASE SETUP
+# =========================
 
 @showcase_group.command(
     name="setup",
-    description="Set the TikTok showcase channel."
+    description="Configure TikTok showcase."
 )
-@app_commands.describe(
-    channel="Channel where TikToks will be posted."
+@app_commands.checks.has_permissions(
+    manage_guild=True
 )
-@app_commands.checks.has_permissions(manage_guild=True)
 async def showcase_setup(
     interaction: discord.Interaction,
-    channel: discord.TextChannel
+    showcase_channel: discord.TextChannel,
+    judge_channel: discord.TextChannel,
+    judge_role: discord.Role
 ):
-    settings = get_guild_config(
+
+    settings = get_showcase_settings(
         interaction.guild.id
     )
 
-    settings["showcase_channel"] = channel.id
+    settings["showcase"]["showcase_channel"] = (
+        showcase_channel.id
+    )
+
+    settings["showcase"]["judge_channel"] = (
+        judge_channel.id
+    )
+
+    settings["showcase"]["judge_role"] = (
+        judge_role.id
+    )
 
     save_config()
 
-    await send_embed(
-        interaction,
-        "🎬 Showcase Channel Set",
-        f"TikTok submissions will be posted in {channel.mention}.",
-        True
+    await interaction.response.send_message(
+        "✅ **TikTok showcase configured!**\n\n"
+        f"🎬 Showcase: {showcase_channel.mention}\n"
+        f"⚖️ Judge channel: {judge_channel.mention}\n"
+        f"👮 Judge role: {judge_role.mention}",
+        ephemeral=True
     )
 
+
+# =========================
+#       SHOWCASE ON
+# =========================
 
 @showcase_group.command(
     name="on",
-    description="Turn the TikTok showcase on."
+    description="Enable TikTok showcase."
 )
-@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.checks.has_permissions(
+    manage_guild=True
+)
 async def showcase_on(
     interaction: discord.Interaction
 ):
-    settings = get_guild_config(
+
+    settings = get_showcase_settings(
         interaction.guild.id
     )
 
-    if not settings.get("showcase_channel"):
-        await send_embed(
-            interaction,
-            "❌ Setup Required",
-            "Use `/showcase setup` first.",
-            True
+    if not settings["showcase"].get(
+        "showcase_channel"
+    ):
+        await interaction.response.send_message(
+            "❌ Run `/showcase setup` first.",
+            ephemeral=True
         )
         return
 
-    settings["showcase_enabled"] = True
+    settings["showcase"]["enabled"] = True
 
     save_config()
 
-    await send_embed(
-        interaction,
-        "✅ Showcase Enabled",
-        "Members can now submit TikTok videos.",
-        True
+    await interaction.response.send_message(
+        "🟢 TikTok showcase is now **ON**.",
+        ephemeral=True
     )
 
+
+# =========================
+#       SHOWCASE OFF
+# =========================
 
 @showcase_group.command(
     name="off",
-    description="Turn the TikTok showcase off."
+    description="Disable TikTok showcase."
 )
-@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.checks.has_permissions(
+    manage_guild=True
+)
 async def showcase_off(
     interaction: discord.Interaction
 ):
-    settings = get_guild_config(
+
+    settings = get_showcase_settings(
         interaction.guild.id
     )
 
-    settings["showcase_enabled"] = False
+    settings["showcase"]["enabled"] = False
 
     save_config()
 
-    await send_embed(
-        interaction,
-        "⛔ Showcase Disabled",
-        "TikTok submissions are now disabled.",
-        True
+    await interaction.response.send_message(
+        "🔴 TikTok showcase is now **OFF**.",
+        ephemeral=True
     )
 
 
+# =========================
+#     SHOWCASE MESSAGE
+# =========================
+
 @showcase_group.command(
     name="message",
-    description="Customize the TikTok showcase text."
+    description="Set the showcase panel message."
 )
-@app_commands.describe(
-    text="Text shown with submitted TikToks."
+@app_commands.checks.has_permissions(
+    manage_guild=True
 )
-@app_commands.checks.has_permissions(manage_guild=True)
 async def showcase_message(
     interaction: discord.Interaction,
     text: str
 ):
-    settings = get_guild_config(
+
+    settings = get_showcase_settings(
         interaction.guild.id
     )
 
-    settings["showcase_message"] = text
+    settings["showcase"]["message"] = text
 
     save_config()
 
-    await send_embed(
-        interaction,
-        "✅ Showcase Message Updated",
-        text,
-        True
+    await interaction.response.send_message(
+        "✅ Showcase message updated.",
+        ephemeral=True
     )
 
+
+# =========================
+#      SHOWCASE PANEL
+# =========================
 
 @showcase_group.command(
     name="panel",
     description="Send the TikTok submission panel."
 )
-@app_commands.describe(
-    channel="Channel where the panel should be sent."
+@app_commands.checks.has_permissions(
+    manage_guild=True
 )
-@app_commands.checks.has_permissions(manage_guild=True)
 async def showcase_panel(
     interaction: discord.Interaction,
     channel: discord.TextChannel
 ):
-    settings = get_guild_config(
+
+    settings = get_showcase_settings(
         interaction.guild.id
     )
 
-    if not settings.get(
+    if not settings["showcase"].get(
         "showcase_channel"
     ):
-        await send_embed(
-            interaction,
-            "❌ Setup Required",
-            "Use `/showcase setup` first.",
-            True
+        await interaction.response.send_message(
+            "❌ Run `/showcase setup` first.",
+            ephemeral=True
         )
         return
 
-    custom_text = settings.get(
-        "showcase_message",
-        "🎬 **SHOW YOUR EDITS!**\n"
-        "Share your best TikTok with the community!"
+    message = settings["showcase"].get(
+        "message",
+        "🎬 Submit your TikTok below!"
     )
 
     embed = discord.Embed(
         title="🎬 TikTok Showcase",
-        description=(
-            f"{custom_text}\n\n"
-            "**How to submit:**\n"
-            "Click the button below and paste your TikTok link.\n\n"
-            "**Example:**\n"
-            "`https://vm.tiktok.com/*******`"
-        ),
+        description=message,
         color=discord.Color.blurple()
     )
 
+    embed.add_field(
+        name="How it works",
+        value=(
+            "Click **Submit TikTok** and send "
+            "your TikTok link.\n\n"
+            "Your submission will be privately "
+            "forwarded to the judges."
+        ),
+        inline=False
+    )
+
     embed.set_footer(
-        text="TikTok Showcase • SECURITY"
+        text=f"{interaction.guild.name} • SECURITY"
     )
 
     try:
@@ -2859,334 +3133,45 @@ async def showcase_panel(
             view=ShowcaseView()
         )
 
-        await send_embed(
-            interaction,
-            "✅ Showcase Panel Sent",
-            f"Panel sent to {channel.mention}.",
-            True
+        await interaction.response.send_message(
+            f"✅ Showcase panel sent to {channel.mention}.",
+            ephemeral=True
         )
 
     except discord.Forbidden:
-        await send_embed(
-            interaction,
-            "❌ Permission Error",
-            "I cannot send messages in that channel.",
-            True
+        await interaction.response.send_message(
+            "❌ I cannot send messages in that channel.",
+            ephemeral=True
         )
 
 
-bot.tree.add_command(showcase_group)
-
-
-# =========================================================
-# 🛠️ UTILITY COMMANDS
-# =========================================================
-
-@bot.tree.command(
-    name="ping",
-    description="Check bot latency."
-)
-async def ping(
-    interaction: discord.Interaction
-):
-    latency = round(
-        bot.latency * 1000
-    )
-
-    await send_embed(
-        interaction,
-        "🏓 Pong!",
-        f"Latency: **{latency}ms**"
-    )
-
-
-@bot.tree.command(
-    name="serverinfo",
-    description="Show server information."
-)
-async def serverinfo(
-    interaction: discord.Interaction
-):
-    guild = interaction.guild
-
-    embed = discord.Embed(
-        title="🛡️ Server Information",
-        color=discord.Color.blurple()
-    )
-
-    embed.add_field(
-        name="Name",
-        value=guild.name,
-        inline=True
-    )
-
-    embed.add_field(
-        name="Members",
-        value=str(guild.member_count),
-        inline=True
-    )
-
-    embed.add_field(
-        name="Channels",
-        value=str(len(guild.channels)),
-        inline=True
-    )
-
-    embed.add_field(
-        name="Roles",
-        value=str(len(guild.roles)),
-        inline=True
-    )
-
-    embed.add_field(
-        name="Server ID",
-        value=str(guild.id),
-        inline=False
-    )
-
-    if guild.icon:
-        embed.set_thumbnail(
-            url=guild.icon.url
-        )
-
-    await interaction.response.send_message(
-        embed=embed
-    )
-
-
-@bot.tree.command(
-    name="userinfo",
-    description="Show information about a member."
-)
-@app_commands.describe(
-    member="Member to inspect."
-)
-async def userinfo(
-    interaction: discord.Interaction,
-    member: Optional[discord.Member] = None
-):
-    member = member or interaction.user
-
-    embed = discord.Embed(
-        title="👤 User Information",
-        color=discord.Color.blurple()
-    )
-
-    embed.set_thumbnail(
-        url=member.display_avatar.url
-    )
-
-    embed.add_field(
-        name="Username",
-        value=member.name,
-        inline=True
-    )
-
-    embed.add_field(
-        name="ID",
-        value=str(member.id),
-        inline=True
-    )
-
-    embed.add_field(
-        name="Joined Server",
-        value=(
-            discord.utils.format_dt(
-                member.joined_at,
-                style="F"
-            )
-            if member.joined_at
-            else "Unknown"
-        ),
-        inline=False
-    )
-
-    await interaction.response.send_message(
-        embed=embed
-    )
-
-
-@bot.tree.command(
-    name="avatar",
-    description="Show a member's avatar."
-)
-@app_commands.describe(
-    member="Member."
-)
-async def avatar(
-    interaction: discord.Interaction,
-    member: Optional[discord.Member] = None
-):
-    member = member or interaction.user
-
-    embed = discord.Embed(
-        title=f"👤 {member.name}'s Avatar",
-        color=discord.Color.blurple()
-    )
-
-    embed.set_image(
-        url=member.display_avatar.url
-    )
-
-    await interaction.response.send_message(
-        embed=embed
-    )
-
-
-@bot.tree.command(
-    name="servericon",
-    description="Show the server icon."
-)
-async def servericon(
-    interaction: discord.Interaction
-):
-    if not interaction.guild.icon:
-        await send_embed(
-            interaction,
-            "❌ No Server Icon",
-            "This server doesn't have an icon."
-        )
-        return
-
-    embed = discord.Embed(
-        title=f"🖼️ {interaction.guild.name}",
-        color=discord.Color.blurple()
-    )
-
-    embed.set_image(
-        url=interaction.guild.icon.url
-    )
-
-    await interaction.response.send_message(
-        embed=embed
-    )
-
-
-@bot.tree.command(
-    name="botinfo",
-    description="Show bot information."
-)
-async def botinfo(
-    interaction: discord.Interaction
-):
-    embed = discord.Embed(
-        title="🛡️ SECURITY",
-        description=(
-            "Discord security, moderation and community bot."
-        ),
-        color=discord.Color.blurple()
-    )
-
-    embed.add_field(
-        name="Servers",
-        value=str(len(bot.guilds)),
-        inline=True
-    )
-
-    embed.add_field(
-        name="Users",
-        value=str(
-            len(bot.users)
-        ),
-        inline=True
-    )
-
-    embed.add_field(
-        name="Latency",
-        value=f"{round(bot.latency * 1000)}ms",
-        inline=True
-    )
-
-    if bot.user:
-        embed.set_thumbnail(
-            url=bot.user.display_avatar.url
-        )
-
-    await interaction.response.send_message(
-        embed=embed
-    )
-
-
-@bot.tree.command(
-    name="say",
-    description="Make the bot say something."
-)
-@app_commands.describe(
-    message="Message to send."
-)
-@app_commands.checks.has_permissions(manage_messages=True)
-async def say(
-    interaction: discord.Interaction,
-    message: str
-):
-    await interaction.response.send_message(
-        "✅ Sent.",
-        ephemeral=True
-    )
-
-    try:
-        await interaction.channel.send(
-            message
-        )
-    except discord.HTTPException:
-        pass
-
-
-@bot.tree.command(
-    name="announce",
-    description="Send an announcement embed."
-)
-@app_commands.describe(
-    title="Announcement title.",
-    message="Announcement message."
-)
-@app_commands.checks.has_permissions(manage_messages=True)
-async def announce(
-    interaction: discord.Interaction,
-    title: str,
-    message: str
-):
-    embed = discord.Embed(
-        title=f"📢 {title}",
-        description=message,
-        color=discord.Color.blurple()
-    )
-
-    embed.set_footer(
-        text=f"Announcement by {interaction.user}"
-    )
-
-    await interaction.response.send_message(
-        "✅ Announcement sent.",
-        ephemeral=True
-    )
-
-    try:
-        await interaction.channel.send(
-            embed=embed
-        )
-    except discord.HTTPException:
-        pass
-
-
-# =========================================================
-# 📚 HELP
-# =========================================================
+# =========================
+#        HELP COMMAND
+# =========================
 
 @bot.tree.command(
     name="help",
-    description="Show all SECURITY commands."
+    description="Show SECURITY commands."
 )
 async def help_command(
     interaction: discord.Interaction
 ):
+
     embed = discord.Embed(
-        title="🛡️ SECURITY — Commands",
-        description=(
-            "Here are all available SECURITY commands.\n"
-            "Use `/` and select the command you need."
-        ),
+        title="🛡️ SECURITY Commands",
+        description="Here are the main SECURITY commands.",
         color=discord.Color.blurple()
+    )
+
+    embed.add_field(
+        name="🛡️ Verification",
+        value=(
+            "`/verifysetup`\n"
+            "`/verify-message`\n"
+            "`/verify-panel`\n"
+            "`/verify`"
+        ),
+        inline=False
     )
 
     embed.add_field(
@@ -3207,43 +3192,34 @@ async def help_command(
     )
 
     embed.add_field(
-        name="🛡️ Verification",
-        value=(
-            "`/verifysetup`\n"
-            "`/verify-message`\n"
-            "`/verify`"
-        ),
-        inline=True
-    )
-
-    embed.add_field(
         name="🔨 Moderation",
         value=(
-            "`/clear`\n"
-            "`/kick`\n"
-            "`/ban`\n"
-            "`/timeout`\n"
-            "`/untimeout`\n"
-            "`/addrole`\n"
-            "`/removerole`"
+            "`/kick` `/ban` `/timeout`\n"
+            "`/untimeout` `/addrole` `/removerole`"
         ),
-        inline=True
+        inline=False
     )
 
     embed.add_field(
         name="🧹 Cleaner",
         value=(
-            "`/clearuser`\n"
-            "`/clearbots`\n"
-            "`/clearlinks`\n"
-            "`/clearinvites`\n"
-            "`/clearchannel`\n"
-            "`/slowmode`\n"
-            "`/lock`\n"
-            "`/unlock`\n"
-            "`/wipe`"
+            "`/clearuser` `/clearbots`\n"
+            "`/clearlinks` `/clearinvites`\n"
+            "`/clearchannel` `/slowmode`\n"
+            "`/lock` `/unlock`"
         ),
-        inline=True
+        inline=False
+    )
+
+    embed.add_field(
+        name="🏆 Levels",
+        value=(
+            "`/rank` `/level` `/leaderboard`\n"
+            "`/setlevelchannel` `/setlevelmessage`\n"
+            "`/togglelevels` `/setlevel`\n"
+            "`/setxp` `/resetxp`"
+        ),
+        inline=False
     )
 
     embed.add_field(
@@ -3253,48 +3229,26 @@ async def help_command(
             "`/ticket panel`\n"
             "`/ticket close`"
         ),
-        inline=True
+        inline=False
     )
 
     embed.add_field(
-        name="⭐ Levels",
-        value=(
-            "`/rank`\n"
-            "`/level`\n"
-            "`/leaderboard`\n"
-            "`/setlevelchannel`\n"
-            "`/setlevelmessage`\n"
-            "`/togglelevels`\n"
-            "`/setlevel`\n"
-            "`/setxp`\n"
-            "`/resetxp`"
-        ),
-        inline=True
-    )
-
-    embed.add_field(
-        name="🎬 TikTok Showcase",
+        name="🎬 TikTok",
         value=(
             "`/showcase setup`\n"
-            "`/showcase on`\n"
-            "`/showcase off`\n"
+            "`/showcase on` `/showcase off`\n"
             "`/showcase message`\n"
             "`/showcase panel`"
         ),
-        inline=True
+        inline=False
     )
 
     embed.add_field(
-        name="🛠️ Utility",
+        name="⚙️ Utility",
         value=(
-            "`/ping`\n"
-            "`/serverinfo`\n"
-            "`/userinfo`\n"
-            "`/avatar`\n"
-            "`/servericon`\n"
-            "`/botinfo`\n"
-            "`/say`\n"
-            "`/announce`"
+            "`/ping` `/serverinfo` `/userinfo`\n"
+            "`/avatar` `/servericon` `/botinfo`\n"
+            "`/say` `/announce` `/wipe`"
         ),
         inline=False
     )
@@ -3305,63 +3259,236 @@ async def help_command(
     )
 
 
-# =========================================================
-# GLOBAL COMMAND ERROR HANDLER
-# =========================================================
+# =========================
+#       ONE ON MESSAGE
+# =========================
 
-@bot.tree.error
-async def on_app_command_error(
-    interaction: discord.Interaction,
-    error: app_commands.AppCommandError
+@bot.event
+async def on_message(
+    message: discord.Message
 ):
 
-    if isinstance(
-        error,
-        app_commands.errors.MissingPermissions
-    ):
-        message = (
-            "❌ You don't have the required permissions "
-            "to use this command."
+    if message.author.bot:
+        return
+
+    if message.guild is None:
+        return
+
+    # =====================
+    #       LEVELS
+    # =====================
+
+    settings = get_level_data(
+        message.guild.id
+    )
+
+    levels_enabled = settings["levels"].get(
+        "enabled",
+        True
+    )
+
+    if levels_enabled:
+
+        # Small random XP reward
+        xp_amount = random.randint(
+            10,
+            20
         )
 
-    elif isinstance(
-        error,
-        app_commands.errors.CommandOnCooldown
-    ):
-        message = "⏳ This command is on cooldown."
-
-    elif isinstance(
-        error,
-        app_commands.errors.CheckFailure
-    ):
-        message = "❌ You don't have permission to use this command."
-
-    else:
-        print(
-            f"Command error: {type(error).__name__}: {error}"
+        data, old_level, new_level = add_xp(
+            message.guild.id,
+            message.author.id,
+            xp_amount
         )
 
-        message = (
-            "❌ Something went wrong while running that command."
-        )
+        if new_level > old_level:
 
-    try:
-        if interaction.response.is_done():
-            await interaction.followup.send(
-                message,
-                ephemeral=True
+            level_channel_id = settings["levels"].get(
+                "channel"
             )
-        else:
-            await interaction.response.send_message(
-                message,
-                ephemeral=True
+
+            if level_channel_id:
+                level_channel = message.guild.get_channel(
+                    int(level_channel_id)
+                )
+            else:
+                level_channel = message.channel
+
+            if isinstance(
+                level_channel,
+                discord.TextChannel
+            ):
+
+                level_message = settings["levels"].get(
+                    "message",
+                    "🎉 {user} reached **Level {level}**!"
+                )
+
+                level_message = (
+                    level_message
+                    .replace(
+                        "{user}",
+                        message.author.mention
+                    )
+                    .replace(
+                        "{username}",
+                        message.author.name
+                    )
+                    .replace(
+                        "{server}",
+                        message.guild.name
+                    )
+                    .replace(
+                        "{level}",
+                        str(new_level)
+                    )
+                    .replace(
+                        "{count}",
+                        str(
+                            message.guild.member_count or 0
+                        )
+                    )
+                )
+
+                try:
+                    await level_channel.send(
+                        level_message
+                    )
+                except discord.HTTPException:
+                    pass
+
+    # =====================
+    #      TIKTOK LINKS
+    # =====================
+
+    showcase = get_showcase_settings(
+        message.guild.id
+    )
+
+    showcase_data = showcase["showcase"]
+
+    if showcase_data.get(
+        "enabled",
+        False
+    ):
+
+        url = extract_tiktok_link(
+            message.content
+        )
+
+        showcase_channel_id = (
+            showcase_data.get(
+                "showcase_channel"
             )
-    except discord.HTTPException:
-        pass
+        )
+
+        judge_channel_id = (
+            showcase_data.get(
+                "judge_channel"
+            )
+        )
+
+        judge_role_id = (
+            showcase_data.get(
+                "judge_role"
+            )
+        )
+
+        if (
+            url
+            and showcase_channel_id
+            and judge_channel_id
+            and message.channel.id
+            == int(showcase_channel_id)
+        ):
+
+            judge_channel = message.guild.get_channel(
+                int(judge_channel_id)
+            )
+
+            if isinstance(
+                judge_channel,
+                discord.TextChannel
+            ):
+
+                role_mention = ""
+
+                if judge_role_id:
+                    role = message.guild.get_role(
+                        int(judge_role_id)
+                    )
+
+                    if role:
+                        role_mention = role.mention
+
+                embed = discord.Embed(
+                    title="🎬 New TikTok Submission",
+                    description=(
+                        f"👤 **Submitted by:** "
+                        f"{message.author.mention}\n\n"
+                        f"🔗 **TikTok:** {url}"
+                    ),
+                    color=discord.Color.blurple()
+                )
+
+                embed.set_footer(
+                    text=f"Submitted in {message.guild.name}"
+                )
+
+                try:
+                    await judge_channel.send(
+                        content=role_mention,
+                        embed=embed
+                    )
+                except discord.HTTPException:
+                    pass
+
+    await bot.process_commands(
+        message
+    )
 
 
-# =========================================================
-# START BOT
-# =========================================================
+# =========================
+#        ONE ON READY
+# =========================
 
-bot.run(TOKEN)    
+@bot.event
+async def on_ready():
+
+    print(
+        f"✅ SECURITY is online as "
+        f"{bot.user}."
+    )
+
+    print(
+        f"🌐 Connected to "
+        f"{len(bot.guilds)} server(s)."
+    )
+
+
+# =========================
+#   REGISTER PERSISTENT VIEWS
+# =========================
+
+bot.add_view(
+    TicketCreateView()
+)
+
+bot.add_view(
+    TicketCloseView()
+)
+
+bot.add_view(
+    ShowcaseView()
+)
+
+
+# =========================
+#        START BOT
+# =========================
+
+bot.run(TOKEN)
+
+# =========================
+#         END PART 8
+# =========================
