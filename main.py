@@ -967,4 +967,5 @@ async def on_command_error(
 
         await ctx.send(
             "❌ I couldn't find that role."
-  
+
+        )
