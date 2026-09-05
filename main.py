@@ -4,16 +4,19 @@ import asyncio
 from datetime import timedelta
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 
-PREFIX = "!"
+
+# =========================================================
+# CONFIG
+# =========================================================
 
 intents = discord.Intents.all()
 
 bot = commands.Bot(
-    command_prefix=PREFIX,
-    intents=intents,
-    help_command=None
+    command_prefix="!",
+    intents=intents
 )
 
 settings = {}
@@ -32,29 +35,40 @@ def get_settings(guild_id):
             "autorole": None,
             "ai_channel": None,
             "log_channel": None,
-            "ticket_category": None,
         }
 
     return settings[guild_id]
 
 
+# =========================================================
+# STARTUP
+# =========================================================
+
 @bot.event
 async def on_ready():
     print(f"✅ SECURITY is online as {bot.user}")
-    print(f"📊 Servers: {len(bot.guilds)}")
+
+    try:
+        synced = await bot.tree.sync()
+        print(f"✅ Synced {len(synced)} slash commands")
+    except Exception as error:
+        print(f"❌ Slash sync error: {error}")
 
     await bot.change_presence(
         activity=discord.Game(
-            name="!help | SECURITY"
+            name="/help | SECURITY"
         )
     )
 
+
+# =========================================================
+# WELCOME
+# =========================================================
 
 @bot.event
 async def on_member_join(member):
     data = get_settings(member.guild.id)
 
-    # Auto role
     role_id = data["autorole"]
 
     if role_id:
@@ -66,7 +80,6 @@ async def on_member_join(member):
             except discord.Forbidden:
                 pass
 
-    # Welcome
     channel_id = data["welcome_channel"]
 
     if channel_id:
@@ -98,6 +111,10 @@ async def on_member_join(member):
         f"{member.mention} joined the server."
     )
 
+
+# =========================================================
+# GOODBYE
+# =========================================================
 
 @bot.event
 async def on_member_remove(member):
@@ -135,91 +152,94 @@ async def on_member_remove(member):
     )
 
 
-@bot.command()
-@commands.has_permissions(manage_guild=True)
+# =========================================================
+# WELCOME SETTINGS
+# =========================================================
+
+@bot.tree.command(
+    name="setwelcome",
+    description="Set the welcome channel"
+)
+@app_commands.checks.has_permissions(
+    manage_guild=True
+)
 async def setwelcome(
-    ctx,
+    interaction: discord.Interaction,
     channel: discord.TextChannel
 ):
-    data = get_settings(ctx.guild.id)
+    data = get_settings(interaction.guild.id)
 
     data["welcome_channel"] = channel.id
 
-    await ctx.send(
+    await interaction.response.send_message(
         f"👋 Welcome channel set to {channel.mention}."
     )
 
 
-@bot.command()
-@commands.has_permissions(manage_guild=True)
+@bot.tree.command(
+    name="setwelcomemessage",
+    description="Set the welcome message"
+)
+@app_commands.checks.has_permissions(
+    manage_guild=True
+)
 async def setwelcomemessage(
-    ctx,
-    *,
-    message
+    interaction: discord.Interaction,
+    message: str
 ):
-    data = get_settings(ctx.guild.id)
+    data = get_settings(interaction.guild.id)
 
     data["welcome_message"] = message
 
-    await ctx.send(
+    await interaction.response.send_message(
         "✅ Welcome message updated."
     )
 
 
-@bot.command()
-@commands.has_permissions(manage_guild=True)
+# =========================================================
+# GOODBYE SETTINGS
+# =========================================================
+
+@bot.tree.command(
+    name="setgoodbye",
+    description="Set the goodbye channel"
+)
+@app_commands.checks.has_permissions(
+    manage_guild=True
+)
 async def setgoodbye(
-    ctx,
+    interaction: discord.Interaction,
     channel: discord.TextChannel
 ):
-    data = get_settings(ctx.guild.id)
+    data = get_settings(interaction.guild.id)
 
     data["goodbye_channel"] = channel.id
 
-    await ctx.send(
+    await interaction.response.send_message(
         f"👋 Goodbye channel set to {channel.mention}."
     )
 
 
-@bot.command()
-@commands.has_permissions(manage_guild=True)
+@bot.tree.command(
+    name="setgoodbyemessage",
+    description="Set the goodbye message"
+)
+@app_commands.checks.has_permissions(
+    manage_guild=True
+)
 async def setgoodbyemessage(
-    ctx,
-    *,
-    message
+    interaction: discord.Interaction,
+    message: str
 ):
-    data = get_settings(ctx.guild.id)
+    data = get_settings(interaction.guild.id)
 
     data["goodbye_message"] = message
 
-    await ctx.send(
+    await interaction.response.send_message(
         "✅ Goodbye message updated."
     )# =========================================================
 # VERIFICATION
 # =========================================================
-
-@bot.command()
-@commands.has_permissions(manage_guild=True)
-async def verifysetup(
-    ctx,
-    role: discord.Role,
-    channel: discord.TextChannel
-):
-    data = get_settings(ctx.guild.id)
-
-    data["verify_role"] = role.id
-    data["verify_channel"] = channel.id
-
-    await channel.send(
-        "✅ **Verification**\n\n"
-        "Click the button below to verify yourself.",
-        view=VerifyView(role.id)
-    )
-
-    await ctx.send(
-        f"✅ Verification setup in {channel.mention}."
-    )
-
 
 class VerifyView(discord.ui.View):
 
@@ -227,7 +247,6 @@ class VerifyView(discord.ui.View):
         super().__init__(timeout=None)
 
         self.role_id = role_id
-
 
     @discord.ui.button(
         label="Verify",
@@ -266,14 +285,46 @@ class VerifyView(discord.ui.View):
             )
 
 
+@bot.tree.command(
+    name="verifysetup",
+    description="Set up the verification system"
+)
+@app_commands.checks.has_permissions(
+    manage_guild=True
+)
+async def verifysetup(
+    interaction: discord.Interaction,
+    role: discord.Role,
+    channel: discord.TextChannel
+):
+    data = get_settings(interaction.guild.id)
+
+    data["verify_role"] = role.id
+    data["verify_channel"] = channel.id
+
+    await channel.send(
+        "✅ **Verification**\n\n"
+        "Click the button below to verify yourself.",
+        view=VerifyView(role.id)
+    )
+
+    await interaction.response.send_message(
+        f"✅ Verification setup in {channel.mention}."
+    )
+
+
 # =========================================================
 # TICKETS
 # =========================================================
 
-@bot.command()
-async def ticket(ctx):
-
-    guild = ctx.guild
+@bot.tree.command(
+    name="ticket",
+    description="Create a support ticket"
+)
+async def ticket(
+    interaction: discord.Interaction
+):
+    guild = interaction.guild
 
     category = discord.utils.get(
         guild.categories,
@@ -286,99 +337,128 @@ async def ticket(ctx):
         )
 
     channel = await guild.create_text_channel(
-        f"ticket-{ctx.author.name}",
+        f"ticket-{interaction.user.name}",
         category=category
     )
 
     await channel.set_permissions(
-        ctx.author,
+        interaction.user,
         read_messages=True,
         send_messages=True
     )
 
     await channel.send(
-        f"🎫 Welcome {ctx.author.mention}!\n\n"
+        f"🎫 Welcome {interaction.user.mention}!\n\n"
         "A staff member will help you soon.\n"
-        "Use `!close` to close this ticket."
+        "Use `/close` to close this ticket."
     )
 
-    await ctx.send(
-        f"🎫 Ticket created: {channel.mention}"
+    await interaction.response.send_message(
+        f"🎫 Ticket created: {channel.mention}",
+        ephemeral=True
     )
 
 
-@bot.command()
-async def close(ctx):
-
-    if not ctx.channel.name.startswith(
+@bot.tree.command(
+    name="close",
+    description="Close the current ticket"
+)
+async def close(
+    interaction: discord.Interaction
+):
+    if not interaction.channel.name.startswith(
         "ticket-"
     ):
-        await ctx.send(
-            "❌ This is not a ticket channel."
+        await interaction.response.send_message(
+            "❌ This is not a ticket channel.",
+            ephemeral=True
         )
         return
 
-    await ctx.send(
+    await interaction.response.send_message(
         "🔒 Closing ticket in 3 seconds..."
     )
 
     await asyncio.sleep(3)
 
-    await ctx.channel.delete()
+    await interaction.channel.delete()
     # =========================================================
-# MODERATION
+# BAN
 # =========================================================
 
-@bot.command()
-@commands.has_permissions(ban_members=True)
+@bot.tree.command(
+    name="ban",
+    description="Ban a member"
+)
+@app_commands.checks.has_permissions(
+    ban_members=True
+)
 async def ban(
-    ctx,
+    interaction: discord.Interaction,
     member: discord.Member,
-    *,
-    reason="No reason provided"
+    reason: str = "No reason provided"
 ):
     await member.ban(reason=reason)
 
-    await ctx.send(
+    await interaction.response.send_message(
         f"🔨 {member.mention} has been banned.\n"
         f"Reason: `{reason}`"
     )
 
     await send_log(
-        ctx.guild,
+        interaction.guild,
         f"🔨 **Ban**\n"
-        f"{member} was banned by {ctx.author}.\n"
+        f"{member} was banned by "
+        f"{interaction.user}.\n"
         f"Reason: {reason}"
     )
 
 
-@bot.command()
-@commands.has_permissions(kick_members=True)
+# =========================================================
+# KICK
+# =========================================================
+
+@bot.tree.command(
+    name="kick",
+    description="Kick a member"
+)
+@app_commands.checks.has_permissions(
+    kick_members=True
+)
 async def kick(
-    ctx,
+    interaction: discord.Interaction,
     member: discord.Member,
-    *,
-    reason="No reason provided"
+    reason: str = "No reason provided"
 ):
     await member.kick(reason=reason)
 
-    await ctx.send(
+    await interaction.response.send_message(
         f"👢 {member.mention} has been kicked.\n"
         f"Reason: `{reason}`"
     )
 
     await send_log(
-        ctx.guild,
+        interaction.guild,
         f"👢 **Kick**\n"
-        f"{member} was kicked by {ctx.author}.\n"
+        f"{member} was kicked by "
+        f"{interaction.user}.\n"
         f"Reason: {reason}"
     )
 
 
-@bot.command()
-@commands.has_permissions(moderate_members=True)
+# =========================================================
+# TIMEOUT
+# =========================================================
+
+@bot.tree.command(
+    name="timeout",
+    description="Timeout a member"
+)
+@app_commands.checks.has_permissions(
+    moderate_members=True
+)
 async def timeout(
-    ctx,
+    interaction: discord.Interaction,
     member: discord.Member,
     minutes: int = 10
 ):
@@ -386,115 +466,146 @@ async def timeout(
         timedelta(minutes=minutes)
     )
 
-    await ctx.send(
+    await interaction.response.send_message(
         f"⏱️ {member.mention} timed out "
         f"for `{minutes}` minutes."
     )
 
     await send_log(
-        ctx.guild,
+        interaction.guild,
         f"⏱️ **Timeout**\n"
-        f"{member} was timed out by {ctx.author}."
+        f"{member} was timed out by "
+        f"{interaction.user}."
     )
 
 
-@bot.command()
-@commands.has_permissions(manage_messages=True)
+# =========================================================
+# WARN
+# =========================================================
+
+@bot.tree.command(
+    name="warn",
+    description="Warn a member"
+)
+@app_commands.checks.has_permissions(
+    manage_messages=True
+)
 async def warn(
-    ctx,
+    interaction: discord.Interaction,
     member: discord.Member,
-    *,
-    reason="No reason provided"
+    reason: str = "No reason provided"
 ):
-    await ctx.send(
+    await interaction.response.send_message(
         f"⚠️ {member.mention} has been warned.\n"
         f"Reason: `{reason}`"
     )
 
     await send_log(
-        ctx.guild,
+        interaction.guild,
         f"⚠️ **Warning**\n"
-        f"{member} was warned by {ctx.author}.\n"
+        f"{member} was warned by "
+        f"{interaction.user}.\n"
         f"Reason: {reason}"
     )
 
 
-@bot.command()
-@commands.has_permissions(manage_messages=True)
+# =========================================================
+# CLEAR
+# =========================================================
+
+@bot.tree.command(
+    name="clear",
+    description="Delete messages"
+)
+@app_commands.checks.has_permissions(
+    manage_messages=True
+)
 async def clear(
-    ctx,
-    amount: int = 10
+    interaction: discord.Interaction,
+    amount: int
 ):
     if amount < 1:
-        await ctx.send(
-            "❌ Amount must be at least 1."
+        await interaction.response.send_message(
+            "❌ Amount must be at least 1.",
+            ephemeral=True
         )
         return
 
-    deleted = await ctx.channel.purge(
-        limit=amount + 1
+    await interaction.response.defer(
+        ephemeral=True
     )
 
-    message = await ctx.send(
-        f"🧹 Deleted `{len(deleted) - 1}` messages."
+    deleted = await interaction.channel.purge(
+        limit=amount
     )
 
-    await asyncio.sleep(3)
-
-    try:
-        await message.delete()
-    except:
-        pass
+    await interaction.followup.send(
+        f"🧹 Deleted `{len(deleted)}` messages.",
+        ephemeral=True
+    )
 
 
 # =========================================================
 # AUTO ROLE
 # =========================================================
 
-@bot.command()
-@commands.has_permissions(manage_roles=True)
+@bot.tree.command(
+    name="autorole",
+    description="Set the automatic member role"
+)
+@app_commands.checks.has_permissions(
+    manage_roles=True
+)
 async def autorole(
-    ctx,
+    interaction: discord.Interaction,
     role: discord.Role
 ):
-    data = get_settings(ctx.guild.id)
+    data = get_settings(interaction.guild.id)
 
     data["autorole"] = role.id
 
-    await ctx.send(
+    await interaction.response.send_message(
         f"🎚️ Auto-role set to {role.mention}."
     )# =========================================================
-# AI / CHAT CHANNEL
+# AI CHANNEL
 # =========================================================
 
-@bot.command()
-@commands.has_permissions(manage_guild=True)
+@bot.tree.command(
+    name="setai",
+    description="Set the AI chat channel"
+)
+@app_commands.checks.has_permissions(
+    manage_guild=True
+)
 async def setai(
-    ctx,
+    interaction: discord.Interaction,
     channel: discord.TextChannel
 ):
-    data = get_settings(ctx.guild.id)
+    data = get_settings(interaction.guild.id)
 
     data["ai_channel"] = channel.id
 
-    await ctx.send(
+    await interaction.response.send_message(
         f"🤖 AI channel set to {channel.mention}."
     )
 
 
-@bot.command()
+@bot.tree.command(
+    name="ai",
+    description="Chat with SECURITY"
+)
 async def ai(
-    ctx,
-    *,
-    message
+    interaction: discord.Interaction,
+    message: str
 ):
-    data = get_settings(ctx.guild.id)
+    data = get_settings(interaction.guild.id)
 
     if data["ai_channel"]:
-        if ctx.channel.id != data["ai_channel"]:
-            await ctx.send(
+        if interaction.channel.id != data["ai_channel"]:
+            await interaction.response.send_message(
                 "❌ AI chat is only available "
-                "in the configured AI channel."
+                "in the configured AI channel.",
+                ephemeral=True
             )
             return
 
@@ -502,7 +613,7 @@ async def ai(
 
     if "hello" in text or "hi" in text:
         response = (
-            f"👋 Hello {ctx.author.mention}!"
+            f"👋 Hello {interaction.user.mention}!"
         )
 
     elif "how are you" in text:
@@ -518,33 +629,41 @@ async def ai(
     else:
         response = (
             f"🤖 You said: **{message}**\n"
-            "I'm your SECURITY bot chat assistant."
+            "I'm your SECURITY bot assistant."
         )
 
-    await ctx.send(response)
+    await interaction.response.send_message(
+        response
+    )
 
 
 # =========================================================
 # SAY
 # =========================================================
 
-@bot.command()
-@commands.has_permissions(manage_messages=True)
+@bot.tree.command(
+    name="say",
+    description="Make SECURITY send a message"
+)
+@app_commands.checks.has_permissions(
+    manage_messages=True
+)
 async def say(
-    ctx,
-    *,
-    message
+    interaction: discord.Interaction,
+    message: str
 ):
-    try:
-        await ctx.message.delete()
-    except:
-        pass
+    await interaction.response.send_message(
+        "📢 Message sent!",
+        ephemeral=True
+    )
 
-    await ctx.send(message)
+    await interaction.channel.send(
+        message
+    )
 
 
 # =========================================================
-# LEVELING / XP
+# LEVELING
 # =========================================================
 
 @bot.event
@@ -570,9 +689,7 @@ async def on_message(message):
 
     user = xp_data[guild_id][user_id]
 
-    gained = random.randint(5, 15)
-
-    user["xp"] += gained
+    user["xp"] += random.randint(5, 15)
 
     needed = user["level"] * 100
 
@@ -581,48 +698,55 @@ async def on_message(message):
         user["xp"] -= needed
         user["level"] += 1
 
-        await message.channel.send(
-            f"🎉 {message.author.mention} "
-            f"leveled up to "
-            f"**Level {user['level']}**!"
-        )
+        try:
+            await message.channel.send(
+                f"🎉 {message.author.mention} "
+                f"leveled up to "
+                f"**Level {user['level']}**!"
+            )
+        except:
+            pass
 
     await bot.process_commands(message)
 
 
-@bot.command()
-async def level(ctx):
-
-    guild_id = ctx.guild.id
-    user_id = ctx.author.id
-
+@bot.tree.command(
+    name="level",
+    description="Show your level and XP"
+)
+async def level(
+    interaction: discord.Interaction
+):
     user = xp_data.get(
-        guild_id,
+        interaction.guild.id,
         {}
     ).get(
-        user_id,
+        interaction.user.id,
         {
             "xp": 0,
             "level": 1
         }
     )
 
-    await ctx.send(
-        f"📊 {ctx.author.mention}\n"
+    await interaction.response.send_message(
+        f"📊 {interaction.user.mention}\n"
         f"Level: **{user['level']}**\n"
         f"XP: **{user['xp']}**"
     )
 
 
-@bot.command()
+@bot.tree.command(
+    name="rank",
+    description="Show a member's rank"
+)
 async def rank(
-    ctx,
+    interaction: discord.Interaction,
     member: discord.Member = None
 ):
-    member = member or ctx.author
+    member = member or interaction.user
 
     user = xp_data.get(
-        ctx.guild.id,
+        interaction.guild.id,
         {}
     ).get(
         member.id,
@@ -632,17 +756,22 @@ async def rank(
         }
     )
 
-    await ctx.send(
+    await interaction.response.send_message(
         f"📊 **{member.display_name}'s Rank**\n"
         f"Level: **{user['level']}**\n"
         f"XP: **{user['xp']}**"
     )# =========================================================
-# SERVER SETUP
+# SERVER INFO
 # =========================================================
 
-@bot.command()
-async def serverinfo(ctx):
-    guild = ctx.guild
+@bot.tree.command(
+    name="serverinfo",
+    description="Show server information"
+)
+async def serverinfo(
+    interaction: discord.Interaction
+):
+    guild = interaction.guild
 
     embed = discord.Embed(
         title=f"🔧 {guild.name}",
@@ -664,12 +793,25 @@ async def serverinfo(ctx):
         value=str(len(guild.roles))
     )
 
-    await ctx.send(embed=embed)
+    await interaction.response.send_message(
+        embed=embed
+    )
 
 
-@bot.command(name="settings")
-async def settings_command(ctx):
-    data = get_settings(ctx.guild.id)
+# =========================================================
+# SETTINGS
+# =========================================================
+
+@bot.tree.command(
+    name="settings",
+    description="Show SECURITY settings"
+)
+async def settings_command(
+    interaction: discord.Interaction
+):
+    data = get_settings(
+        interaction.guild.id
+    )
 
     def channel(value):
         if value:
@@ -688,52 +830,69 @@ async def settings_command(ctx):
 
     embed.add_field(
         name="👋 Welcome",
-        value=channel(data["welcome_channel"]),
+        value=channel(
+            data["welcome_channel"]
+        ),
         inline=False
     )
 
     embed.add_field(
         name="👋 Goodbye",
-        value=channel(data["goodbye_channel"]),
+        value=channel(
+            data["goodbye_channel"]
+        ),
         inline=False
     )
 
     embed.add_field(
         name="🤖 AI",
-        value=channel(data["ai_channel"]),
+        value=channel(
+            data["ai_channel"]
+        ),
         inline=False
     )
 
     embed.add_field(
         name="📜 Logs",
-        value=channel(data["log_channel"]),
+        value=channel(
+            data["log_channel"]
+        ),
         inline=False
     )
 
     embed.add_field(
         name="🎚️ Auto Role",
-        value=role(data["autorole"]),
+        value=role(
+            data["autorole"]
+        ),
         inline=False
     )
 
-    await ctx.send(embed=embed)
+    await interaction.response.send_message(
+        embed=embed
+    )
 
 
 # =========================================================
-# GIVEAWAYS
+# GIVEAWAY
 # =========================================================
 
-@bot.command()
-@commands.has_permissions(manage_guild=True)
+@bot.tree.command(
+    name="giveaway",
+    description="Start a giveaway"
+)
+@app_commands.checks.has_permissions(
+    manage_guild=True
+)
 async def giveaway(
-    ctx,
+    interaction: discord.Interaction,
     seconds: int,
-    *,
-    prize
+    prize: str
 ):
     if seconds < 5:
-        await ctx.send(
-            "❌ Giveaway must last at least 5 seconds."
+        await interaction.response.send_message(
+            "❌ Giveaway must last at least 5 seconds.",
+            ephemeral=True
         )
         return
 
@@ -747,14 +906,18 @@ async def giveaway(
         color=discord.Color.gold()
     )
 
-    message = await ctx.send(embed=embed)
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+    message = await interaction.original_response()
 
     await message.add_reaction("🎉")
 
     await asyncio.sleep(seconds)
 
     try:
-        message = await ctx.channel.fetch_message(
+        message = await interaction.channel.fetch_message(
             message.id
         )
 
@@ -771,14 +934,14 @@ async def giveaway(
                     users.append(user)
 
         if not users:
-            await ctx.send(
+            await interaction.channel.send(
                 "🎉 Giveaway ended, but nobody entered."
             )
             return
 
         winner = random.choice(users)
 
-        await ctx.send(
+        await interaction.channel.send(
             f"🎉 Congratulations {winner.mention}!\n"
             f"You won **{prize}**!"
         )
@@ -793,11 +956,13 @@ async def giveaway(
 # SUGGESTIONS
 # =========================================================
 
-@bot.command()
+@bot.tree.command(
+    name="suggest",
+    description="Submit a suggestion"
+)
 async def suggest(
-    ctx,
-    *,
-    suggestion
+    interaction: discord.Interaction,
+    suggestion: str
 ):
     embed = discord.Embed(
         title="📝 New Suggestion",
@@ -806,21 +971,18 @@ async def suggest(
     )
 
     embed.set_author(
-        name=ctx.author.display_name,
-        icon_url=ctx.author.display_avatar.url
+        name=interaction.user.display_name,
+        icon_url=interaction.user.display_avatar.url
     )
 
-    message = await ctx.send(
+    await interaction.response.send_message(
         embed=embed
     )
 
+    message = await interaction.original_response()
+
     await message.add_reaction("✅")
     await message.add_reaction("❌")
-
-    try:
-        await ctx.message.delete()
-    except:
-        pass
 
 
 # =========================================================
@@ -831,7 +993,9 @@ async def send_log(
     guild,
     message
 ):
-    data = get_settings(guild.id)
+    data = get_settings(
+        guild.id
+    )
 
     channel_id = data["log_channel"]
 
@@ -849,143 +1013,162 @@ async def send_log(
             pass
 
 
-@bot.command()
-@commands.has_permissions(manage_guild=True)
+@bot.tree.command(
+    name="setlog",
+    description="Set the logging channel"
+)
+@app_commands.checks.has_permissions(
+    manage_guild=True
+)
 async def setlog(
-    ctx,
+    interaction: discord.Interaction,
     channel: discord.TextChannel
 ):
-    data = get_settings(ctx.guild.id)
+    data = get_settings(
+        interaction.guild.id
+    )
 
     data["log_channel"] = channel.id
 
-    await ctx.send(
+    await interaction.response.send_message(
         f"📜 Logging channel set to {channel.mention}."
-    )# =========================================================
+)
+
+# =========================================================
 # HELP
 # =========================================================
 
-@bot.command()
-async def help(ctx):
-
+@bot.tree.command(
+    name="help",
+    description="Show all SECURITY commands"
+)
+async def help_command(
+    interaction: discord.Interaction
+):
     embed = discord.Embed(
         title="🛡️ SECURITY Commands",
-        description="Use `!` before commands.",
+        description="All available slash commands:",
         color=discord.Color.blurple()
     )
 
     embed.add_field(
         name="👋 Welcome / Goodbye",
         value=(
-            "`!setwelcome #channel`\n"
-            "`!setwelcomemessage <message>`\n"
-            "`!setgoodbye #channel`\n"
-            "`!setgoodbyemessage <message>`"
+            "`/setwelcome`\n"
+            "`/setwelcomemessage`\n"
+            "`/setgoodbye`\n"
+            "`/setgoodbyemessage`"
         ),
         inline=False
     )
 
     embed.add_field(
         name="✅ Verification",
-        value="`!verifysetup @role #channel`",
+        value="`/verifysetup`",
         inline=False
     )
 
     embed.add_field(
         name="🎫 Tickets",
-        value="`!ticket` • `!close`",
+        value="`/ticket` • `/close`",
         inline=False
     )
 
     embed.add_field(
         name="🤖 AI / Chat",
-        value="`!setai #channel` • `!ai <message>`",
+        value="`/setai` • `/ai`",
         inline=False
     )
 
     embed.add_field(
         name="🛡️ Moderation",
         value=(
-            "`!ban @user`\n"
-            "`!kick @user`\n"
-            "`!timeout @user 10`\n"
-            "`!warn @user reason`\n"
-            "`!clear 10`"
+            "`/ban`\n"
+            "`/kick`\n"
+            "`/timeout`\n"
+            "`/warn`\n"
+            "`/clear`"
         ),
         inline=False
     )
 
     embed.add_field(
         name="🎚️ Auto Role",
-        value="`!autorole @role`",
+        value="`/autorole`",
         inline=False
     )
 
     embed.add_field(
         name="📊 Leveling",
-        value="`!level` • `!rank @user`",
+        value="`/level` • `/rank`",
         inline=False
     )
 
     embed.add_field(
         name="📢 Say",
-        value="`!say <message>`",
+        value="`/say`",
         inline=False
     )
 
     embed.add_field(
         name="🔧 Server",
-        value="`!serverinfo` • `!settings`",
+        value="`/serverinfo` • `/settings`",
         inline=False
     )
 
     embed.add_field(
         name="🎉 Giveaway",
-        value="`!giveaway <seconds> <prize>`",
+        value="`/giveaway`",
         inline=False
     )
 
     embed.add_field(
         name="📝 Suggestions",
-        value="`!suggest <suggestion>`",
+        value="`/suggest`",
         inline=False
     )
 
     embed.add_field(
         name="📜 Logging",
-        value="`!setlog #channel`",
+        value="`/setlog`",
         inline=False
     )
 
     embed.add_field(
         name="🧹 Cleanup",
         value=(
-            "`!deletechannels`\n"
-            "`!deletecategories`\n"
-            "`!wipe`"
+            "`/deletechannels`\n"
+            "`/deletecategories`\n"
+            "`/wipe`"
         ),
         inline=False
     )
 
-    await ctx.send(
+    await interaction.response.send_message(
         embed=embed
     )
 
 
 # =========================================================
-# CLEANUP
+# DELETE CHANNELS
 # =========================================================
 
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def deletechannels(ctx):
-
-    await ctx.send(
+@bot.tree.command(
+    name="deletechannels",
+    description="Delete all server channels"
+)
+@app_commands.checks.has_permissions(
+    administrator=True
+)
+async def deletechannels(
+    interaction: discord.Interaction
+):
+    await interaction.response.send_message(
         "🧹 Deleting all channels..."
     )
 
     for channel in list(
-        ctx.guild.channels
+        interaction.guild.channels
     ):
         try:
             await channel.delete()
@@ -993,16 +1176,26 @@ async def deletechannels(ctx):
             pass
 
 
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def deletecategories(ctx):
+# =========================================================
+# DELETE CATEGORIES
+# =========================================================
 
-    await ctx.send(
+@bot.tree.command(
+    name="deletecategories",
+    description="Delete all server categories"
+)
+@app_commands.checks.has_permissions(
+    administrator=True
+)
+async def deletecategories(
+    interaction: discord.Interaction
+):
+    await interaction.response.send_message(
         "🧹 Deleting all categories..."
     )
 
     for category in list(
-        ctx.guild.categories
+        interaction.guild.categories
     ):
         try:
             await category.delete()
@@ -1010,20 +1203,30 @@ async def deletecategories(ctx):
             pass
 
 
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def wipe(ctx):
+# =========================================================
+# WIPE
+# =========================================================
 
-    await ctx.send(
+@bot.tree.command(
+    name="wipe",
+    description="Delete channels and categories"
+)
+@app_commands.checks.has_permissions(
+    administrator=True
+)
+async def wipe(
+    interaction: discord.Interaction
+):
+    await interaction.response.send_message(
         "⚠️ **SERVER WIPE STARTING**\n"
-        "All channels and categories will be deleted.\n"
+        "Channels and categories will be deleted.\n"
         "Roles and the server itself will remain."
     )
 
     await asyncio.sleep(3)
 
     for channel in list(
-        ctx.guild.channels
+        interaction.guild.channels
     ):
         try:
             await channel.delete()
@@ -1031,7 +1234,7 @@ async def wipe(ctx):
             pass
 
     try:
-        channel = await ctx.guild.create_text_channel(
+        channel = await interaction.guild.create_text_channel(
             "security-wipe-complete"
         )
 
@@ -1048,73 +1251,51 @@ async def wipe(ctx):
 
 
 # =========================================================
-# ERROR HANDLER
+# SLASH COMMAND ERROR HANDLER
 # =========================================================
 
-@bot.event
-async def on_command_error(
-    ctx,
+@bot.tree.error
+async def on_app_command_error(
+    interaction,
     error
 ):
 
     if isinstance(
         error,
-        commands.MissingPermissions
+        app_commands.errors.MissingPermissions
     ):
-        await ctx.send(
+        message = (
             "❌ You don't have permission "
-            "to use that command."
+            "to use this command."
         )
 
     elif isinstance(
         error,
-        commands.MissingRequiredArgument
+        app_commands.errors.CommandOnCooldown
     ):
-        await ctx.send(
-            "❌ You're missing a required argument."
-        )
-
-    elif isinstance(
-        error,
-        commands.MemberNotFound
-    ):
-        await ctx.send(
-            "❌ I couldn't find that member."
-        )
-
-    elif isinstance(
-        error,
-        commands.RoleNotFound
-    ):
-        await ctx.send(
-            "❌ I couldn't find that role."
-        )
-
-    elif isinstance(
-        error,
-        commands.ChannelNotFound
-    ):
-        await ctx.send(
-            "❌ I couldn't find that channel."
-        )
-
-    elif isinstance(
-        error,
-        commands.CommandNotFound
-    ):
-        return
-
-    elif isinstance(
-        error,
-        commands.BadArgument
-    ):
-        await ctx.send(
-            "❌ Invalid argument."
+        message = (
+            "⏳ This command is on cooldown."
         )
 
     else:
         print(
-            f"Command error: {error}"
+            f"Slash command error: {error}"
+        )
+
+        message = (
+            "❌ Something went wrong "
+            "while running the command."
+        )
+
+    if interaction.response.is_done():
+        await interaction.followup.send(
+            message,
+            ephemeral=True
+        )
+    else:
+        await interaction.response.send_message(
+            message,
+            ephemeral=True
         )
 
 
