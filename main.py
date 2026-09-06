@@ -1282,7 +1282,7 @@ async def unlock(interaction):
     await interaction.response.send_message(
         "🔓 Channel unlocked."
     )        
-    )
+    
 @bot.tree.command(
     name="wipe",
     description="Delete all server channels and categories"
