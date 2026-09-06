@@ -2809,7 +2809,3 @@ if not TOKEN:
 
 
 bot.run(TOKEN)
-
-_____________
-End of Part 11
-_____________
