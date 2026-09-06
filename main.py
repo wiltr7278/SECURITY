@@ -3657,19 +3657,162 @@ async def on_ready():
 
 
 # =========================
-#         START BOT
+#         END PART 12
+# =========================
+# =========================
+# PART 13 — MEMBER COUNT SYSTEM
 # =========================
 
+MEMBERCOUNT_CHANNEL_KEY = "membercount_channel"
+MEMBERCOUNT_TYPE_KEY = "membercount_type"
 
-if not TOKEN:
-    raise RuntimeError(
-        "DISCORD_TOKEN is missing!"
+
+async def update_membercount(guild):
+    cfg = get_guild_config(guild.id)
+
+    channel_id = cfg.get(MEMBERCOUNT_CHANNEL_KEY)
+
+    if not channel_id:
+        return
+
+    channel = guild.get_channel(int(channel_id))
+
+    if channel is None:
+        return
+
+    member_count = guild.member_count or len(guild.members)
+    new_name = f"👥・𝒎𝒆𝒎𝒃𝒆𝒓𝒔・{member_count}"
+
+    try:
+        if channel.name != new_name:
+            await channel.edit(name=new_name)
+    except (discord.Forbidden, discord.HTTPException):
+        pass
+
+
+@bot.tree.command(
+    name="membercount",
+    description="Create or show the server member count"
+)
+@app_commands.describe(
+    channel_type="Choose the member count channel type"
+)
+@app_commands.choices(
+    channel_type=[
+        app_commands.Choice(
+            name="Text Channel",
+            value="text"
+        ),
+        app_commands.Choice(
+            name="Voice Channel",
+            value="voice"
+        ),
+        app_commands.Choice(
+            name="Category",
+            value="category"
+        )
+    ]
+)
+@app_commands.default_permissions(manage_guild=True)
+async def membercount(
+    interaction: discord.Interaction,
+    channel_type: app_commands.Choice[str]
+):
+    guild = interaction.guild
+
+    if guild is None:
+        await interaction.response.send_message(
+            "❌ This command can only be used inside a server.",
+            ephemeral=True
+        )
+        return
+
+    if not interaction.user.guild_permissions.manage_guild:
+        await interaction.response.send_message(
+            "❌ You need **Manage Server** permission.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    cfg = get_guild_config(guild.id)
+
+    member_count = guild.member_count or len(guild.members)
+
+    old_channel_id = cfg.get(MEMBERCOUNT_CHANNEL_KEY)
+
+    if old_channel_id:
+        old_channel = guild.get_channel(int(old_channel_id))
+
+        if old_channel:
+            try:
+                await old_channel.delete(
+                    reason="Replacing SECURITY member count channel"
+                )
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
+    channel_name = f"👥・𝒎𝒆𝒎𝒃𝒆𝒓𝒔・{member_count}"
+
+    try:
+        if channel_type.value == "text":
+            channel = await guild.create_text_channel(
+                channel_name,
+                reason="SECURITY member count"
+            )
+
+        elif channel_type.value == "voice":
+            channel = await guild.create_voice_channel(
+                channel_name,
+                reason="SECURITY member count"
+            )
+
+        elif channel_type.value == "category":
+            channel = await guild.create_category(
+                channel_name,
+                reason="SECURITY member count"
+            )
+
+        else:
+            await interaction.followup.send(
+                "❌ Invalid channel type.",
+                ephemeral=True
+            )
+            return
+
+    except discord.Forbidden:
+        await interaction.followup.send(
+            "❌ I need **Manage Channels** permission.",
+            ephemeral=True
+        )
+        return
+
+    except discord.HTTPException:
+        await interaction.followup.send(
+            "❌ Discord couldn't create the channel.",
+            ephemeral=True
+        )
+        return
+
+    cfg[MEMBERCOUNT_CHANNEL_KEY] = channel.id
+    cfg[MEMBERCOUNT_TYPE_KEY] = channel_type.value
+    save_config()
+
+    await interaction.followup.send(
+        f"✅ Member count channel created!\n\n"
+        f"📁 **Type:** {channel_type.name}\n"
+        f"👥 **Members:** `{member_count:,}`\n"
+        f"🔄 The count will update automatically.",
+        ephemeral=True
     )
 
 
+# =========================
+# START BOT
+# =========================
+
+if not TOKEN:
+    raise RuntimeError("DISCORD_TOKEN is missing!")
+
 bot.run(TOKEN)
-
-
-# =========================
-#         END PART 12
-# =========================
