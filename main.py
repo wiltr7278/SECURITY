@@ -2900,147 +2900,6 @@ async def poll(
 # =========================
 # =========================
 #        START PART 11
-#            HELP
-# =========================
-
-
-@bot.tree.command(
-    name="help",
-    description="Show SECURITY commands"
-)
-async def help_command(
-    interaction: discord.Interaction
-):
-
-    embed = discord.Embed(
-        title="🛡️ SECURITY — HELP",
-        description=(
-            "Here are the SECURITY commands."
-        ),
-        color=discord.Color.blurple()
-    )
-
-    embed.add_field(
-        name="👋 Welcome / Bye",
-        value=(
-            "`/welcome`\n"
-            "`/welcome-on`\n"
-            "`/welcome-off`\n"
-            "`/welcome-role`\n"
-            "`/welcome-role-off`\n"
-            "`/welcome-message`\n"
-            "`/welcome-image`\n"
-            "`/welcome-style`\n"
-            "`/testwelcome`\n"
-            "`/bye`\n"
-            "`/bye-on`\n"
-            "`/bye-off`\n"
-            "`/bye-message`\n"
-            "`/bye-image`\n"
-            "`/bye-style`\n"
-            "`/testbye`"
-        ),
-        inline=False
-    )
-
-    embed.add_field(
-        name="🛡️ Verify",
-        value=(
-            "`/verifysetup`\n"
-            "`/verify-message`\n"
-            "`/verify-panel`\n"
-            "`/verify`"
-        ),
-        inline=False
-    )
-
-    embed.add_field(
-        name="🎫 Tickets",
-        value=(
-            "`/ticket setup`\n"
-            "`/ticket panel`\n"
-            "`/ticket close`"
-        ),
-        inline=False
-    )
-
-    embed.add_field(
-        name="🔨 Moderation",
-        value=(
-            "`/clear` `/kick` `/ban`\n"
-            "`/timeout` `/untimeout`\n"
-            "`/addrole` `/removerole`\n"
-            "`/warn` `/warnings`"
-        ),
-        inline=False
-    )
-
-    embed.add_field(
-        name="🧹 Cleaner",
-        value=(
-            "`/clearuser`\n"
-            "`/clearbots`\n"
-            "`/clearlinks`\n"
-            "`/clearinvites`\n"
-            "`/clearchannel`\n"
-            "`/slowmode`\n"
-            "`/lock` `/unlock`"
-        ),
-        inline=False
-    )
-
-    embed.add_field(
-        name="💥 Wipe",
-        value="`/wipe`",
-        inline=False
-    )
-
-    embed.add_field(
-        name="⭐ Levels",
-        value=(
-            "`/rank` `/level` `/leaderboard`\n"
-            "`/setlevelchannel`\n"
-            "`/setlevelmessage`\n"
-            "`/togglelevels`\n"
-            "`/setlevel` `/setxp` `/resetxp`"
-        ),
-        inline=False
-    )
-
-    embed.add_field(
-        name="📊 Utility",
-        value=(
-            "`/ping` `/serverinfo` `/userinfo`\n"
-            "`/avatar` `/servericon` `/botinfo`\n"
-            "`/membercount` `/channelinfo` `/roleinfo`\n"
-            "`/say` `/announce` `/uptime`\n"
-            "`/security-status` `/poll`"
-        ),
-        inline=False
-    )
-
-    embed.add_field(
-        name="🎬 TikTok Showcase",
-        value=(
-            "`/showcase setup`\n"
-            "`/showcase on` `/showcase off`\n"
-            "`/showcase message`\n"
-            "`/showcase panel`"
-        ),
-        inline=False
-    )
-
-    await interaction.response.send_message(
-        embed=embed,
-        ephemeral=True
-    )
-
-
-# =========================
-#         END PART 11
-# =========================
-# =========================
-#        START PART 12
 #   SHOWCASE + EVENTS + START
 # =========================
 
@@ -3657,11 +3516,11 @@ async def on_ready():
 
 
 # =========================
-#         END PART 12
+#         END PART 11
 # =========================
-# =========================
-# PART 13 — MEMBER COUNT SYSTEM
-# =========================
+# =========================================================
+# PART 12 — MEMBER COUNT
+# =========================================================
 
 MEMBERCOUNT_CHANNEL_KEY = "membercount_channel"
 MEMBERCOUNT_TYPE_KEY = "membercount_type"
@@ -3692,25 +3551,16 @@ async def update_membercount(guild):
 
 @bot.tree.command(
     name="membercount",
-    description="Create or show the server member count"
+    description="Create a member count channel"
 )
 @app_commands.describe(
-    channel_type="Choose the member count channel type"
+    channel_type="Choose the type of member count channel"
 )
 @app_commands.choices(
     channel_type=[
-        app_commands.Choice(
-            name="Text Channel",
-            value="text"
-        ),
-        app_commands.Choice(
-            name="Voice Channel",
-            value="voice"
-        ),
-        app_commands.Choice(
-            name="Category",
-            value="category"
-        )
+        app_commands.Choice(name="Text Channel", value="text"),
+        app_commands.Choice(name="Voice Channel", value="voice"),
+        app_commands.Choice(name="Category", value="category")
     ]
 )
 @app_commands.default_permissions(manage_guild=True)
@@ -3737,7 +3587,6 @@ async def membercount(
     await interaction.response.defer(ephemeral=True)
 
     cfg = get_guild_config(guild.id)
-
     member_count = guild.member_count or len(guild.members)
 
     old_channel_id = cfg.get(MEMBERCOUNT_CHANNEL_KEY)
@@ -3748,7 +3597,7 @@ async def membercount(
         if old_channel:
             try:
                 await old_channel.delete(
-                    reason="Replacing SECURITY member count channel"
+                    reason="Replacing member count channel"
                 )
             except (discord.Forbidden, discord.HTTPException):
                 pass
@@ -3768,18 +3617,11 @@ async def membercount(
                 reason="SECURITY member count"
             )
 
-        elif channel_type.value == "category":
+        else:
             channel = await guild.create_category(
                 channel_name,
                 reason="SECURITY member count"
             )
-
-        else:
-            await interaction.followup.send(
-                "❌ Invalid channel type.",
-                ephemeral=True
-            )
-            return
 
     except discord.Forbidden:
         await interaction.followup.send(
@@ -3800,12 +3642,137 @@ async def membercount(
     save_config()
 
     await interaction.followup.send(
-        f"✅ Member count channel created!\n\n"
-        f"📁 **Type:** {channel_type.name}\n"
-        f"👥 **Members:** `{member_count:,}`\n"
-        f"🔄 The count will update automatically.",
+        f"✅ **Member Count Created!**\n\n"
+        f"📁 Type: **{channel_type.name}**\n"
+        f"👥 Members: **{member_count:,}**\n"
+        f"🔄 The number will automatically update.",
         ephemeral=True
     )
+
+
+# =========================================================
+# _____________
+# End of Part 12
+# _____________
+# =========================================================
+# =========================
+# HELP COMMAND
+# =========================
+
+@bot.tree.command(
+    name="help",
+    description="Show all SECURITY bot commands"
+)
+async def help_command(interaction: discord.Interaction):
+
+    embed = discord.Embed(
+        title="🛡️ 𝐒𝐄𝐂𝐔𝐑𝐈𝐓𝐘 — Commands",
+        description="Here are all available commands:",
+        color=discord.Color.blurple()
+    )
+
+    embed.add_field(
+        name="👋 Welcome & Auto Role",
+        value=(
+            "`/welcome` `/welcome-on` `/welcome-off`\n"
+            "`/welcome-message` `/welcome-image` `/welcome-style`\n"
+            "`/welcome-role` `/welcome-role-off` `/testwelcome`"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="👋 Bye",
+        value=(
+            "`/bye` `/bye-on` `/bye-off`\n"
+            "`/bye-message` `/bye-image` `/bye-style` `/testbye`"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🔐 Verification",
+        value=(
+            "`/verifysetup` `/verify-message`\n"
+            "`/verify-panel` `/verify`"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🎫 Tickets",
+        value=(
+            "`/ticket setup` `/ticket panel` `/ticket close`"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🛡️ Moderation",
+        value=(
+            "`/clear` `/kick` `/ban` `/timeout` `/untimeout`\n"
+            "`/addrole` `/removerole` `/warn` `/warnings`"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🧹 Cleaner",
+        value=(
+            "`/clearuser` `/clearbots` `/clearlinks`\n"
+            "`/clearinvites` `/clearchannel` `/slowmode`\n"
+            "`/lock` `/unlock`"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="💥 Server Wipe",
+        value="`/wipe` — Removes removable server channels/categories/roles.",
+        inline=False
+    )
+
+    embed.add_field(
+        name="🔧 Utility",
+        value=(
+            "`/ping` `/serverinfo` `/userinfo` `/avatar`\n"
+            "`/servericon` `/botinfo` `/membercount`\n"
+            "`/channelinfo` `/roleinfo` `/uptime`\n"
+            "`/security-status` `/say` `/announce` `/poll`"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="📈 Levels",
+        value=(
+            "`/rank` `/level` `/leaderboard`\n"
+            "`/setlevelchannel` `/setlevelmessage` `/togglelevels`\n"
+            "`/setlevel` `/setxp` `/resetxp`"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🎬 TikTok Showcase",
+        value=(
+            "`/showcase setup` `/showcase on` `/showcase off`\n"
+            "`/showcase message` `/showcase panel`"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="❓ Help",
+        value="`/help`",
+        inline=False
+    )
+
+    embed.set_footer(
+        text="𝐒𝐄𝐂𝐔𝐑𝐈𝐓𝐘 • Security made simple 🛡️"
+    )
+
+    await interaction.response.send_message(embed=embed)
 
 
 # =========================
