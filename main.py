@@ -614,6 +614,9 @@ async def testbye(interaction):
     await interaction.response.send_message(
         "👋 Bye test message.",
         ephemeral=True
+    )     
+
+
 class VerifyButton(discord.ui.View):
 
     def __init__(self):
