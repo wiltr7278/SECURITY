@@ -4555,8 +4555,7 @@ async def emojiinfo(
         f"😀 **Emoji Information**\n\n"
         f"Emoji: {emoji}"
     )
-    )
-
+    
 @bot.tree.command(name="permissions", description="Show your permissions")
 async def permissions(interaction):
 
