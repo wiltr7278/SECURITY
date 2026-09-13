@@ -4547,7 +4547,6 @@ async def channelinfo(
 
 
 @bot.tree.command(name="emojiinfo", description="Show emoji information")
-@bot.tree.command(name="emojiinfo", description="Show emoji information")
 async def emojiinfo(
     interaction: discord.Interaction,
     emoji: str
@@ -4555,6 +4554,7 @@ async def emojiinfo(
     await interaction.response.send_message(
         f"😀 **Emoji Information**\n\n"
         f"Emoji: {emoji}"
+    )
     )
 
 @bot.tree.command(name="permissions", description="Show your permissions")
