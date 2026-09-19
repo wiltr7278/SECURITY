@@ -4031,18 +4031,23 @@ async def on_ready():
     # --------------------------------------------------------
 
     try:
-
+        # Publish globally (Discord may take some time to propagate global commands).
         synced = await bot.tree.sync()
+        print(f"✅ Synced {len(synced)} global slash commands.")
 
-        print(
-            f"✅ Synced {len(synced)} slash commands."
-        )
+        # Also sync to each connected guild so commands appear immediately there.
+        # This copies the registered global command tree, including nested groups
+        # such as /chat bot setup, /chat bot panel, and /chat bot off.
+        for guild in bot.guilds:
+            try:
+                bot.tree.copy_global_to(guild=guild)
+                guild_synced = await bot.tree.sync(guild=guild)
+                print(f"✅ Synced {len(guild_synced)} slash commands to guild {guild.id}.")
+            except Exception as guild_error:
+                print(f"❌ Guild slash command sync failed for {guild.id}: {guild_error}")
 
     except Exception as error:
-
-        print(
-            f"❌ Slash command sync failed: {error}"
-        )
+        print(f"❌ Global slash command sync failed: {error}")
 
 
 async def stats_worker():
