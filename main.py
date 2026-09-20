@@ -407,8 +407,7 @@ async def get_channel(
     style=[
         app_commands.Choice(name="Default", value="default"),
         app_commands.Choice(name="Avatar", value="avatar"),
-        app_commands.Choice(name="Custom Image", value="custom_image"),
-        app_commands.Choice(name="AI Photo Card", value="ai_photo")
+        app_commands.Choice(name="Custom Image", value="custom_image")
     ],
     enabled=[
         app_commands.Choice(
@@ -479,8 +478,7 @@ async def welcome_setup(
     style_label = {
         "default": "Default",
         "avatar": "Avatar",
-        "custom_image": "Custom Image",
-        "ai_photo": "AI Photo Card"
+        "custom_image": "Custom Image"
     }.get(style, "Default")
 
     await interaction.response.send_message(
@@ -502,52 +500,49 @@ async def welcome_setup(
     )
 
 
-welcome_group = app_commands.Group(
+@bot.tree.command(
     name="welcome",
-    description="Control and view the Welcome system"
+    description="View Welcome settings"
 )
+async def welcome(interaction):
 
-
-@welcome_group.command(name="on", description="Turn the Welcome system on")
-async def welcome_on(interaction: discord.Interaction):
-    if not await require_admin(interaction):
-        return
-    update_setting(interaction.guild.id, "welcome_enabled", 1)
-    await interaction.response.send_message(
-        "🟢 **Welcome system is now ON.**", ephemeral=True
+    s = get_settings(
+        interaction.guild.id
     )
 
-
-@welcome_group.command(name="off", description="Turn the Welcome system off")
-async def welcome_off(interaction: discord.Interaction):
-    if not await require_admin(interaction):
-        return
-    update_setting(interaction.guild.id, "welcome_enabled", 0)
-    await interaction.response.send_message(
-        "🔴 **Welcome system is now OFF.**", ephemeral=True
+    channel = (
+        interaction.guild.get_channel(
+            s["welcome_channel_id"]
+        )
+        if s["welcome_channel_id"]
+        else None
     )
 
+    role = (
+        interaction.guild.get_role(
+            s["welcome_role_id"]
+        )
+        if s["welcome_role_id"]
+        else None
+    )
 
-@welcome_group.command(name="status", description="View Welcome settings")
-async def welcome_status(interaction: discord.Interaction):
-    s = get_settings(interaction.guild.id)
-    channel = (interaction.guild.get_channel(s["welcome_channel_id"])
-               if s["welcome_channel_id"] else None)
-    role = (interaction.guild.get_role(s["welcome_role_id"])
-            if s["welcome_role_id"] else None)
     await interaction.response.send_message(
         embed=make_embed(
             "👋 Welcome System",
-            f"**Status:** {'🟢 ON' if s['welcome_enabled'] else '🔴 OFF'}\n"
-            f"**Channel:** {channel.mention if channel else 'Not set'}\n"
-            f"**Auto-role:** {role.mention if role else 'Not set'}\n"
+            f"**Status:** "
+            f"{'🟢 ON' if s['welcome_enabled'] else '🔴 OFF'}\n"
+            f"**Channel:** "
+            f"{channel.mention if channel else 'Not set'}\n"
+            f"**Auto-role:** "
+            f"{role.mention if role else 'Not set'}\n"
             f"**Style:** `{s['welcome_style']}`\n"
-            f"**Image:** {'✅ Saved' if s['welcome_image'] else '❌ None'}\n\n"
+            f"**Image:** "
+            f"{'✅ Saved' if s['welcome_image'] else '❌ None'}\n\n"
             f"**Message:**\n{s['welcome_message']}"
-        ), ephemeral=True
+        ),
+        ephemeral=True
     )
 
-bot.tree.add_command(welcome_group)
 
 @bot.tree.command(
     name="testwelcome",
@@ -564,66 +559,6 @@ async def testwelcome(interaction):
         "✅ Welcome test sent.",
         ephemeral=True
     )
-
-
-async def create_welcome_ai_card(member):
-    """Create a decorated welcome-card graphic using the member's live Discord avatar."""
-    if Image is None:
-        return None
-
-    card = Image.new("RGB", (1100, 360), (9, 10, 16))
-    draw = ImageDraw.Draw(card)
-
-    bold = normal = None
-    for path in (
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    ):
-        if os.path.exists(path):
-            try:
-                if bold is None:
-                    bold = ImageFont.truetype(path, 48)
-                    normal = ImageFont.truetype(path, 28)
-                break
-            except Exception:
-                pass
-    if bold is None:
-        bold = normal = ImageFont.load_default()
-
-    # Monochrome cyber decorations and framed card edges.
-    draw.rounded_rectangle((12, 12, 1088, 348), radius=28, outline=(235, 238, 245), width=3)
-    draw.line((460, 32, 1060, 32), fill=(90, 100, 125), width=2)
-    draw.line((460, 328, 1060, 328), fill=(90, 100, 125), width=2)
-    for x, y, r in ((1010, 82, 8), (1040, 112, 5), (970, 290, 6), (500, 290, 4)):
-        draw.ellipse((x-r, y-r, x+r, y+r), outline=(220, 225, 238), width=2)
-    draw.polygon([(35, 70), (115, 18), (80, 100)], fill=(36, 42, 58))
-    draw.polygon([(1060, 250), (1080, 205), (1080, 305)], fill=(36, 42, 58))
-
-    try:
-        avatar_data = await member.display_avatar.read()
-        avatar = Image.open(io.BytesIO(avatar_data)).convert("RGBA")
-        avatar = ImageOps.fit(avatar, (238, 238))
-        mask = Image.new("L", (238, 238), 0)
-        ImageDraw.Draw(mask).ellipse((0, 0, 237, 237), fill=255)
-        draw.ellipse((55, 54, 305, 304), outline=(245, 247, 255), width=5)
-        card.paste(avatar, (61, 60), mask)
-    except Exception:
-        draw.ellipse((61, 60, 299, 298), outline=(245, 247, 255), width=4)
-
-    display_name = str(member)
-    while draw.textbbox((0, 0), display_name, font=bold)[2] > 560 and len(display_name) > 8:
-        display_name = display_name[:-4] + "…"
-    draw.text((350, 76), display_name, font=bold, fill=(248, 249, 255))
-    draw.text((354, 145), "WELCOME TO THE SERVER", font=normal, fill=(180, 190, 210))
-    draw.text((354, 202), f"MEMBER  #{getattr(member, 'guild', None).member_count if getattr(member, 'guild', None) else '—'}", font=normal, fill=(225, 229, 240))
-
-    # Decorative loading-style bar.
-    draw.rounded_rectangle((354, 267, 1015, 300), radius=16, outline=(220, 225, 238), width=3)
-    draw.rounded_rectangle((361, 274, 720, 293), radius=10, fill=(220, 225, 238))
-    output = io.BytesIO()
-    card.save(output, format="PNG")
-    output.seek(0)
-    return output
 
 
 async def send_welcome(
@@ -658,27 +593,19 @@ async def send_welcome(
 
     # Welcome style controls which visual is shown.
     if style == "avatar":
-        e.set_thumbnail(url=member.display_avatar.url)
+        avatar = member.display_avatar.url
+        e.set_thumbnail(url=avatar)
     elif style == "custom_image":
         if s["welcome_image"]:
             e.set_image(url=s["welcome_image"])
-    elif style == "ai_photo":
-        card_image = await create_welcome_ai_card(member)
-        if card_image:
-            card_file = discord.File(card_image, filename="welcome-card.png")
-            e.set_image(url="attachment://welcome-card.png")
-            await channel.send(content=member.mention, embed=e, file=card_file)
-        else:
-            e.set_thumbnail(url=member.display_avatar.url)
-            await channel.send(content=member.mention, embed=e)
-    else:
-        if s["welcome_image"]:
-            # Keep compatibility with older settings that already saved an image.
-            e.set_image(url=s["welcome_image"])
-        await channel.send(content=member.mention, embed=e)
+    elif style == "default" and s["welcome_image"]:
+        # Keep compatibility with older settings that already saved an image.
+        e.set_image(url=s["welcome_image"])
 
-    if style in ("avatar", "custom_image"):
-        await channel.send(content=member.mention, embed=e)
+    await channel.send(
+        content=member.mention,
+        embed=e
+    )
 
     if s["welcome_role_id"]:
 
@@ -2324,12 +2251,6 @@ async def rank(
     member: discord.Member = None
 ):
 
-    cfg = db_execute("SELECT channel_id, enabled FROM rank_view_config WHERE guild_id=?", (interaction.guild.id,), fetchone=True)
-    if cfg and cfg["enabled"] and interaction.channel_id != cfg["channel_id"]:
-        allowed = interaction.guild.get_channel(cfg["channel_id"])
-        await interaction.response.send_message(f"❌ Please use /rank in {allowed.mention if allowed else 'the configured rank channel'}.", ephemeral=True)
-        return
-
     member = member or interaction.user
 
     data = get_level_data(
@@ -2379,54 +2300,6 @@ async def level(
             f"**XP:** {data['xp']}"
         )
     )
-
-
-@bot.tree.command(name="level-set", description="Set a member's level (0–10000)")
-@app_commands.describe(member="Member whose level to set", level_number="New level, from 0 to 10000")
-async def level_set(interaction: discord.Interaction, member: discord.Member, level_number: app_commands.Range[int, 0, 10000]):
-    if not await require_admin(interaction):
-        return
-    db_execute("INSERT INTO levels(guild_id,user_id,xp,level) VALUES(?,?,0,?) ON CONFLICT(guild_id,user_id) DO UPDATE SET xp=0, level=excluded.level", (interaction.guild.id, member.id, int(level_number)))
-    settings = get_settings(interaction.guild.id)
-    channel = await get_channel(interaction.guild, settings["level_channel_id"])
-    if not channel:
-        channel = interaction.channel
-    position = get_rank(interaction.guild.id, member.id)
-    try:
-        card = await create_level_image(member, int(level_number), 0, position)
-        await channel.send(content=f"⭐ {member.mention}", embed=make_embed("⭐ LEVEL UPDATED", f"An admin set {member.mention}'s level to **{level_number}**.\n**Rank:** #{position}"), file=discord.File(card, filename="level-up.png"))
-    except Exception as exc:
-        print(f"Admin level-set image error: {exc}")
-        await channel.send(embed=make_embed("⭐ LEVEL UPDATED", f"An admin set {member.mention}'s level to **{level_number}**.\n**Rank:** #{position}"))
-    await interaction.response.send_message(f"✅ Set {member.mention} to level **{level_number}** and announced it in {channel.mention}.", ephemeral=True)
-
-
-@bot.tree.command(name="level-on", description="Enable the level system")
-async def level_on(interaction: discord.Interaction):
-    if not await require_admin(interaction): return
-    update_setting(interaction.guild.id, "level_enabled", 1)
-    await interaction.response.send_message("⭐ Levels are now **ON**.", ephemeral=True)
-
-
-@bot.tree.command(name="level-off", description="Disable the level system")
-async def level_off(interaction: discord.Interaction):
-    if not await require_admin(interaction): return
-    update_setting(interaction.guild.id, "level_enabled", 0)
-    await interaction.response.send_message("⭐ Levels are now **OFF**.", ephemeral=True)
-
-
-# Configure the channel where members are allowed to use /rank.
-db_execute("CREATE TABLE IF NOT EXISTS rank_view_config (guild_id INTEGER PRIMARY KEY, channel_id INTEGER, enabled INTEGER DEFAULT 0)")
-
-@bot.tree.command(name="rank-view-channel", description="Set or disable the channel for /rank")
-@app_commands.describe(channel="Channel for rank commands (leave empty to disable)", enabled="Enable or disable the restriction")
-async def rank_view_channel(interaction: discord.Interaction, enabled: bool, channel: discord.TextChannel = None):
-    if not await require_admin(interaction): return
-    if enabled and channel is None:
-        await interaction.response.send_message("❌ Choose a channel when enabling rank channel restriction.", ephemeral=True)
-        return
-    db_execute("INSERT INTO rank_view_config(guild_id,channel_id,enabled) VALUES(?,?,?) ON CONFLICT(guild_id) DO UPDATE SET channel_id=excluded.channel_id, enabled=excluded.enabled", (interaction.guild.id, channel.id if channel else None, int(enabled)))
-    await interaction.response.send_message(f"✅ Rank channel restriction {'enabled in ' + channel.mention if enabled else 'disabled'}.", ephemeral=True)
 
 
 @bot.tree.command(
@@ -3652,6 +3525,248 @@ async def say(
 
 
 # ============================================================
+# WIPE CHANNELS (preserves the server and all roles)
+# ============================================================
+
+@bot.tree.command(name="wipe", description="Delete all channels and categories, keeping the server and roles")
+@app_commands.checks.has_permissions(administrator=True)
+async def wipe_command(interaction: discord.Interaction):
+    if interaction.guild is None:
+        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
+
+    guild = interaction.guild
+    await interaction.response.send_message(
+        "⚠️ Wipe started: deleting all channels and categories. The server and roles will be kept.",
+        ephemeral=True
+    )
+    # Deleting categories may already remove their children; ignore channels that
+    # have disappeared during the process. No roles or the guild itself are touched.
+    for channel in list(guild.channels):
+        try:
+            await channel.delete(reason=f"Server channel wipe requested by {interaction.user} ({interaction.user.id})")
+        except discord.NotFound:
+            continue
+        except discord.Forbidden:
+            print(f"Wipe skipped channel {channel.id}: missing permissions")
+        except discord.HTTPException as exc:
+            print(f"Wipe failed for channel {channel.id}: {exc}")
+
+
+# ============================================================
+# HELP
+# ============================================================
+
+@bot.tree.command(
+    name="help",
+    description="View all SECURITY commands"
+)
+async def help_command(interaction):
+
+    embed = make_embed(
+        "🔐 𝐒𝐄𝐂𝐔𝐑𝐈𝐓𝐘 — COMMAND PANEL",
+        "All registered SECURITY slash commands. Commands shown here are read directly from the bot's command tree."
+    )
+
+    names = []
+
+    def collect_commands(commands_list, prefix=""):
+        for command in commands_list:
+            qualified = f"{prefix} {command.name}".strip()
+            if isinstance(command, app_commands.Group):
+                collect_commands(command.commands, qualified)
+            else:
+                names.append("/" + qualified.replace(" ", " "))
+
+    collect_commands(bot.tree.get_commands())
+    names = sorted(set(names), key=str.casefold)
+
+    # Discord embeds allow up to 25 fields and 1024 characters per field.
+    per_field = 12
+    for index in range(0, len(names), per_field):
+        batch = names[index:index + per_field]
+        embed.add_field(
+            name=f"📜 Commands {index + 1}–{index + len(batch)}",
+            value="\n".join(f"`{name}`" for name in batch),
+            inline=False
+        )
+
+    if not names:
+        embed.description = "No slash commands are registered yet."
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ============================================================
+# END OF PART 10
+# ============================================================
+# ============================================================
+# ⏰ PART 11 — REMINDERS + MESSAGE EVENTS
+# ============================================================
+
+
+def parse_duration(text):
+
+    match = re.fullmatch(
+        r"(\d+)(s|m|h|d|w)",
+        text.lower().strip()
+    )
+
+    if not match:
+        return None
+
+    amount = int(
+        match.group(1)
+    )
+
+    unit = match.group(2)
+
+    multipliers = {
+        "s": 1,
+        "m": 60,
+        "h": 3600,
+        "d": 86400,
+        "w": 604800
+    }
+
+    return timedelta(
+        seconds=amount * multipliers[unit]
+    )
+
+
+@bot.tree.command(
+    name="remind",
+    description="Set a reminder"
+)
+@app_commands.describe(
+    time="Example: 10m, 2h, 1d",
+    message="Reminder message"
+)
+async def remind(
+    interaction,
+    time: str,
+    message: str
+):
+
+    duration = parse_duration(
+        time
+    )
+
+    if not duration:
+
+        await interaction.response.send_message(
+            "❌ Invalid time.\n"
+            "Use examples like `10m`, `2h`, `1d`.",
+            ephemeral=True
+        )
+
+        return
+
+    remind_at = (
+        datetime.now(timezone.utc)
+        + duration
+    )
+
+    db_execute(
+        """
+        INSERT INTO reminders
+        (
+            guild_id,
+            user_id,
+            channel_id,
+            remind_at,
+            message
+        )
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            interaction.guild.id,
+            interaction.user.id,
+            interaction.channel.id,
+            remind_at.isoformat(),
+            message
+        )
+    )
+
+    await interaction.response.send_message(
+        f"⏰ Reminder set for "
+        f"<t:{int(remind_at.timestamp())}:R>.",
+        ephemeral=True
+    )
+
+
+async def reminder_worker():
+
+    while True:
+
+        try:
+
+            now = datetime.now(
+                timezone.utc
+            )
+
+            rows = db_execute(
+                """
+                SELECT *
+                FROM reminders
+                """,
+                fetchall=True
+            )
+
+            for row in rows:
+
+                try:
+
+                    remind_at = datetime.fromisoformat(
+                        row["remind_at"]
+                    )
+
+                    if remind_at > now:
+                        continue
+
+                    channel = None
+
+                    guild = bot.get_guild(
+                        row["guild_id"]
+                    )
+
+                    if guild:
+
+                        channel = guild.get_channel(
+                            row["channel_id"]
+                        )
+
+                    if channel:
+
+                        await channel.send(
+                            f"<@{row['user_id']}> ⏰ "
+                            f"**Reminder:** {row['message']}"
+                        )
+
+                    db_execute(
+                        """
+                        DELETE FROM reminders
+                        WHERE id = ?
+                        """,
+                        (row["id"],)
+                    )
+
+                except Exception as error:
+
+                    print(
+                        f"Reminder error: {error}"
+                    )
+
+        except Exception as error:
+
+            print(
+                f"Reminder worker error: {error}"
+            )
+
+        await asyncio.sleep(5)
+
+
+# ============================================================
 # MESSAGE EVENT
 # ============================================================
 
@@ -3786,23 +3901,18 @@ async def on_ready():
     # --------------------------------------------------------
 
     try:
-        # Publish globally (Discord may take some time to propagate global commands).
-        synced = await bot.tree.sync()
-        print(f"✅ Synced {len(synced)} global slash commands.")
 
-        # Remove legacy guild-specific copies. Commands are registered globally
-        # above, so duplicating them in each guild makes Discord show duplicates.
-        # Syncing the cleared guild tree deletes those old guild-only commands.
-        for guild in bot.guilds:
-            try:
-                bot.tree.clear_commands(guild=guild)
-                await bot.tree.sync(guild=guild)
-                print(f"✅ Cleared legacy guild-specific slash commands for {guild.id}.")
-            except Exception as guild_error:
-                print(f"❌ Could not clear guild-specific commands for {guild.id}: {guild_error}")
+        synced = await bot.tree.sync()
+
+        print(
+            f"✅ Synced {len(synced)} slash commands."
+        )
 
     except Exception as error:
-        print(f"❌ Global slash command sync failed: {error}")
+
+        print(
+            f"❌ Slash command sync failed: {error}"
+        )
 
 
 async def stats_worker():
@@ -3822,32 +3932,6 @@ async def stats_worker():
             )
 
         await asyncio.sleep(60)
-
-
-# ============================================================
-# HELP COMMAND
-# ============================================================
-
-@bot.tree.command(name="help", description="View SECURITY bot commands")
-async def help_command(interaction: discord.Interaction):
-    embed = make_embed("🔐 SECURITY — COMMAND HELP", "Here are the available SECURITY commands.")
-    embed.add_field(
-        name="⭐ Levels",
-        value=(
-            "`/levels-setup` `/levels-on` `/levels-off`\n"
-            "`/level` `/rank` `/leaderboard`\n"
-            "`/level-set` — set a member's level (0–10000)\n"
-            "`/level-on` `/level-off` — enable or disable levels\n"
-            "`/rank-view-channel` — restrict `/rank` to a channel"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="🛠️ Other commands",
-        value="Use `/` in Discord to view the rest of SECURITY's registered slash commands.",
-        inline=False,
-    )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 # ============================================================
