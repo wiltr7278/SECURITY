@@ -3562,40 +3562,71 @@ async def wipe_command(interaction: discord.Interaction):
     description="View all SECURITY commands"
 )
 async def help_command(interaction):
-
     embed = make_embed(
         "🔐 𝐒𝐄𝐂𝐔𝐑𝐈𝐓𝐘 — COMMAND PANEL",
-        "All registered SECURITY slash commands. Commands shown here are read directly from the bot's command tree."
+        "Commands are grouped below by feature."
     )
 
-    names = []
+    sections = {
+        "👋 WELCOME / BYE": [],
+        "✅ VERIFICATION": [],
+        "🎫 TICKETS": [],
+        "📊 STATS": [],
+        "⭐ LEVELS / XP": [],
+        "🎬 TIKTOK SHOWCASE": [],
+        "🛡️ MODERATION": [],
+        "🧹 CLEANER": [],
+        "💣 SERVER WIPE": [],
+        "⏰ REMINDERS": [],
+        "⚙️ GENERAL / UTILITY": [],
+    }
 
-    def collect_commands(commands_list, prefix=""):
+    def add_commands(commands_list, prefix=""):
         for command in commands_list:
             qualified = f"{prefix} {command.name}".strip()
             if isinstance(command, app_commands.Group):
-                collect_commands(command.commands, qualified)
+                add_commands(command.commands, qualified)
+                continue
+
+            full = "/" + qualified
+            key = qualified.casefold()
+            if any(word in key for word in ("welcome", "bye", "goodbye", "testwelcome", "testbye")):
+                section = "👋 WELCOME / BYE"
+            elif any(word in key for word in ("verify", "verification")):
+                section = "✅ VERIFICATION"
+            elif "ticket" in key:
+                section = "🎫 TICKETS"
+            elif "stats" in key or "statistic" in key:
+                section = "📊 STATS"
+            elif any(word in key for word in ("level", "rank", "xp")):
+                section = "⭐ LEVELS / XP"
+            elif "showcase" in key or "tiktok" in key:
+                section = "🎬 TIKTOK SHOWCASE"
+            elif any(word in key for word in ("clean", "clear")):
+                section = "🧹 CLEANER"
+            elif "wipe" in key:
+                section = "💣 SERVER WIPE"
+            elif "remind" in key:
+                section = "⏰ REMINDERS"
+            elif any(word in key for word in ("mod", "ban", "kick", "timeout", "warn", "mute", "unban")):
+                section = "🛡️ MODERATION"
             else:
-                names.append("/" + qualified.replace(" ", " "))
+                section = "⚙️ GENERAL / UTILITY"
+            sections[section].append(full)
 
-    collect_commands(bot.tree.get_commands())
-    names = sorted(set(names), key=str.casefold)
+    add_commands(bot.tree.get_commands())
+    for heading, commands in sections.items():
+        if commands:
+            embed.add_field(
+                name=heading,
+                value="\n".join(f"`{name}`" for name in sorted(set(commands), key=str.casefold)),
+                inline=False
+            )
 
-    # Discord embeds allow up to 25 fields and 1024 characters per field.
-    per_field = 12
-    for index in range(0, len(names), per_field):
-        batch = names[index:index + per_field]
-        embed.add_field(
-            name=f"📜 Commands {index + 1}–{index + len(batch)}",
-            value="\n".join(f"`{name}`" for name in batch),
-            inline=False
-        )
-
-    if not names:
+    if not any(sections.values()):
         embed.description = "No slash commands are registered yet."
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
-
 
 # ============================================================
 # END OF PART 10
@@ -3902,10 +3933,17 @@ async def on_ready():
 
     try:
 
+        # Remove any old guild-scoped copies so commands are registered only globally.
+        # This addresses duplicates caused by a previous guild + global sync setup.
+        for guild in bot.guilds:
+            guild_ref = discord.Object(id=guild.id)
+            bot.tree.clear_commands(guild=guild_ref)
+            await bot.tree.sync(guild=guild_ref)
+
         synced = await bot.tree.sync()
 
         print(
-            f"✅ Synced {len(synced)} slash commands."
+            f"✅ Synced {len(synced)} global slash commands; cleared guild-specific copies."
         )
 
     except Exception as error:
