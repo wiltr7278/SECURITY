@@ -3185,6 +3185,12 @@ async def handle_moderation(
 
     violation = False
 
+    # Block links from regular members when automatic moderation is enabled.
+    # Discord invite links and ordinary URLs are both treated as links.
+    link_pattern = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+    if link_pattern.search(message.content or ""):
+        violation = True
+
     # Excessive mentions
     if len(message.mentions) >= 6:
         violation = True
@@ -3932,6 +3938,14 @@ async def on_ready():
     # --------------------------------------------------------
 
     try:
+
+        # Restrict every slash command to administrators, except /rank and /help.
+        # Discord uses these default permissions to hide staff commands from members.
+        for command in bot.tree.get_commands():
+            if command.name not in {"rank", "help"}:
+                app_commands.default_permissions(administrator=True)(command)
+            else:
+                command.default_permissions = None
 
         # Remove any old guild-scoped copies so commands are registered only globally.
         # This addresses duplicates caused by a previous guild + global sync setup.
