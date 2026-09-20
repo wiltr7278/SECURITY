@@ -3825,6 +3825,32 @@ async def stats_worker():
 
 
 # ============================================================
+# HELP COMMAND
+# ============================================================
+
+@bot.tree.command(name="help", description="View SECURITY bot commands")
+async def help_command(interaction: discord.Interaction):
+    embed = make_embed("🔐 SECURITY — COMMAND HELP", "Here are the available SECURITY commands.")
+    embed.add_field(
+        name="⭐ Levels",
+        value=(
+            "`/levels-setup` `/levels-on` `/levels-off`\n"
+            "`/level` `/rank` `/leaderboard`\n"
+            "`/level-set` — set a member's level (0–10000)\n"
+            "`/level-on` `/level-off` — enable or disable levels\n"
+            "`/rank-view-channel` — restrict `/rank` to a channel"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="🛠️ Other commands",
+        value="Use `/` in Discord to view the rest of SECURITY's registered slash commands.",
+        inline=False,
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ============================================================
 # FINAL START
 # ============================================================
 
